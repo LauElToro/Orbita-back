@@ -8,7 +8,7 @@ Hay dos accesos: el equipo (`/auth/login`, rol `admin`) y cada comercio (`/cuent
 - PostgreSQL 16 con Prisma: fichas, canales, planes, uso, conversaciones, pagos, tickets y turnos.
 - Redis 7: cola de mensajes (BullMQ), lock por ficha, dedupe de 30 segundos, respuestas pendientes (Pub/Sub), contadores de uso y rate limit.
 - Dos procesos con la misma imagen: `api` (`dist/server.js`) y `worker` (`dist/worker.js`).
-- Tests con Vitest: unitarios y de integración contra Postgres y Redis reales (testcontainers). La calidad se mide con SonarQube.
+- Tests con Vitest: unitarios y de integración contra Postgres y Redis reales (testcontainers).
 ## Qué hace
 - Recibir el mensaje que reenvía el flujo de ManyChat (entrada) y contestar en menos de un segundo con un `messageId`.
 - Resolver el cliente por el extremo que recibió el mensaje.
@@ -219,4 +219,4 @@ docker compose up -d --build
 Desarrollo local: `npm run dev` y `npm run dev:worker` en `Backend/` con Postgres y Redis del compose.
 ## Tests y calidad
 - `npm test` en `Backend/` corre unitarios e integración (necesita Docker para testcontainers). `npm run test:unit` corre solo los unitarios.
-- `npm run quality` en la raíz corre los tests con cobertura de los dos proyectos, levanta SonarQube (`docker-compose.quality.yml`, puerto 9000), crea el quality gate `Orbita` (cobertura mínima de 70%) y corre el scanner. Si no hay `SONAR_TOKEN`, genera uno.
+- `npm run test:coverage` en la raíz genera la cobertura de backend y frontend.
