@@ -60,6 +60,7 @@ export async function iniciarSuscripcionMp(deps: Deps, tenant: TenantFull, email
   const sub = tenant.subscription;
   if (!sub) throw notFound('Suscripción');
   if (sub.medio !== 'mercadopago') throw new HttpError(409, 'El medio de pago es transferencia');
+  if (!tenant.planElegido) throw new HttpError(409, 'Elegí un plan antes de pagar');
   if (sub.mpInitPoint) return { initPoint: sub.mpInitPoint };
   if (!deps.mercadopago.habilitado) throw new HttpError(503, 'Mercado Pago no está configurado');
 

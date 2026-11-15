@@ -65,6 +65,17 @@ describe('registro y acceso', () => {
     expect(otroMe.negocio.id).toMatch(/^peluqueria-luna-[0-9a-f]{4}$/);
   });
 
+  it('registra sin plan y no deja pagar hasta elegir uno', async () => {
+    const { headers } = await registrarCliente(env, { planId: undefined });
+    expect((await llamar(headers, 'GET', '/cuenta/me')).json()).toMatchObject({ planElegido: false });
+    const pago = await llamar(headers, 'POST', '/cuenta/suscripcion');
+    expect(pago.statusCode).toBe(409);
+    expect(pago.json().error).toBe('Elegí un plan antes de pagar');
+
+    expect((await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'turnos' })).statusCode).toBe(200);
+    expect((await llamar(headers, 'GET', '/cuenta/me')).json()).toMatchObject({ planElegido: true, plan: { id: 'turnos' } });
+  });
+
   it('separa roles: el cliente no entra al panel y el admin no usa /cuenta', async () => {
     const { headers } = await registrarCliente(env);
     expect((await llamar(headers, 'GET', '/clientes')).statusCode).toBe(403);

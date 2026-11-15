@@ -57,7 +57,7 @@ async function perfilDeCodigo(config: Config, code: string): Promise<PerfilGoogl
 
 type PedidoGoogle =
   | { modo: 'login' }
-  | { modo: 'registro'; negocio: string; rubro: string; nombre: string; planId: 'mensajes' | 'turnos' | 'completo' };
+  | { modo: 'registro'; negocio: string; rubro: string; nombre: string; planId?: 'mensajes' | 'turnos' | 'completo' };
 
 export async function prepararGoogle(deps: Deps, raw: unknown): Promise<{ url: string }> {
   if (!deps.config.GOOGLE_CLIENT_ID || !deps.config.GOOGLE_CLIENT_SECRET) {
@@ -111,8 +111,10 @@ function parsePedido(raw: unknown): PedidoGoogle {
   const negocio = texto(body.negocio, 2, 120);
   const rubro = texto(body.rubro, 2, 80);
   const nombre = texto(body.nombre, 2, 120);
-  const planId = body.planId;
-  if (planId !== 'mensajes' && planId !== 'turnos' && planId !== 'completo') throw new HttpError(400, 'Elegí un plan');
+  const planId = body.planId ?? undefined;
+  if (planId !== undefined && planId !== 'mensajes' && planId !== 'turnos' && planId !== 'completo') {
+    throw new HttpError(400, 'Ese plan no existe');
+  }
   if (body.aceptaTerminos !== true || body.aceptaPrivacidad !== true) {
     throw new HttpError(400, 'Tenés que aceptar los términos y la privacidad');
   }

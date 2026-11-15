@@ -77,6 +77,7 @@ model Tenant {
   pausaMotivo         PausaMotivo?
   planId              String
   plan                Plan          @relation(fields: [planId], references: [id])
+  planElegido         Boolean       @default(true)
   timezone            String        @default("America/Argentina/Buenos_Aires")
   pageId              String?
   appTokenEnc         String?

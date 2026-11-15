@@ -24,7 +24,7 @@ export const registroSchema = z.object({
   nombre: z.string().trim().min(2).max(120),
   email: z.string().trim().toLowerCase().email(),
   password,
-  planId: z.enum(PLANES_AUTOGESTION),
+  planId: z.enum(PLANES_AUTOGESTION).optional(),
   medio: z.literal('mercadopago').default('mercadopago'),
   aceptaTerminos: aceptar('Tenés que aceptar los Términos y Condiciones'),
   aceptaPrivacidad: aceptar('Tenés que aceptar la Política de Privacidad'),
@@ -38,13 +38,16 @@ async function idDisponible(deps: Deps, negocio: string): Promise<string> {
   return libre ? base : `${base}-${randomBytes(2).toString('hex')}`;
 }
 
-/** Alta autogestionada: la ficha nace pausada (motivo onboarding) hasta que pague y termine el tutorial. */
+/**
+ * Alta autogestionada: la ficha nace pausada (motivo onboarding) hasta que pague y termine el tutorial.
+ * Sin plan, la ficha guarda el más chico solo para cumplir la relación y `planElegido` queda en false hasta que elija.
+ */
 export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) {
   const input = registroSchema.parse(raw);
   if (await deps.prisma.clientUser.findUnique({ where: { email: input.email } })) {
     throw conflict('Ya existe una cuenta con ese email');
   }
-  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: input.planId ?? 'mensajes' } });
   const id = await idDisponible(deps, input.negocio);
   const timezone = 'America/Argentina/Buenos_Aires';
   const now = deps.now();
@@ -57,6 +60,7 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
       estado: 'pausado',
       pausaMotivo: 'onboarding',
       planId: plan.id,
+      planElegido: Boolean(input.planId),
       timezone,
       apiKey: randomToken(24),
       publicToken: randomToken(18),
@@ -201,6 +205,7 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
       topes: { dia: tenant.topeDia, semana: tenant.topeSemana, mes: tenant.topeMes },
     },
     plan: tenant.plan,
+    planElegido: tenant.planElegido,
     canales: tenant.canales.map(({ tipo, endpointId, etiqueta }) => ({ tipo, endpointId, etiqueta })),
     manychat: {
       pageId: tenant.pageId,
@@ -260,7 +265,11 @@ export async function cambiarPlan(deps: Deps, tenantId: string, raw: unknown) {
   if (tenant.planId === 'personalizado') {
     throw conflict('Tu plan es Personalizado: los cambios se coordinan con el equipo de Orbita');
   }
-  return actualizarTenant(deps, tenantId, planSchema.parse(raw));
+  const input = planSchema.parse(raw);
+  const actualizado = await actualizarTenant(deps, tenantId, input);
+  if (!input.planId || tenant.planElegido) return actualizado;
+  await deps.prisma.tenant.update({ where: { id: tenantId }, data: { planElegido: true } });
+  return getTenant(deps.prisma, tenantId);
 }
 
 export async function avanzarOnboarding(deps: Deps, tenantId: string, raw: unknown) {

@@ -249,7 +249,7 @@ export async function listarTenants(deps: Deps) {
   return tenants.map((t) => ({
     id: t.id,
     nombre: t.nombre,
-    plan: { id: t.plan.id, nombre: t.plan.nombre },
+    plan: { id: t.plan.id, nombre: t.planElegido ? t.plan.nombre : 'Sin plan' },
     canales: t.canales.map((c) => ({ tipo: c.tipo, etiqueta: c.etiqueta })),
     estado: t.estado,
     pausaMotivo: t.pausaMotivo,
