@@ -1,0 +1,222 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantEstado {
+  activo
+  pausado
+}
+
+enum PausaMotivo {
+  manual
+  impago
+  onboarding
+}
+
+enum TicketTipo {
+  ia_personalizada
+  arrepentimiento
+}
+
+enum CanalTipo {
+  whatsapp
+  instagram
+  telegram
+}
+
+enum MedioPago {
+  mercadopago
+  transferencia
+}
+
+enum EstadoPago {
+  al_dia
+  pendiente
+  impago
+}
+
+enum TicketEstado {
+  nuevo
+  en_gestion
+  cotizado
+  contratado
+  descartado
+}
+
+enum TurnoEstado {
+  reservado
+  confirmado
+  cancelado
+}
+
+model Plan {
+  id                  String   @id
+  nombre              String
+  precioTransferencia Int
+  precioMercadoPago   Int
+  topeDia             Int
+  topeSemana          Int
+  topeMes             Int
+  modulos             String[]
+  maxCanales          Int
+  modeloCapaz         Boolean  @default(false)
+  tenants             Tenant[]
+}
+
+model Tenant {
+  id                  String        @id
+  nombre              String
+  estado              TenantEstado  @default(activo)
+  pausaMotivo         PausaMotivo?
+  planId              String
+  plan                Plan          @relation(fields: [planId], references: [id])
+  timezone            String        @default("America/Argentina/Buenos_Aires")
+  pageId              String?
+  appTokenEnc         String?
+  apiKey              String        @unique
+  rubro               String?
+  perfil              Json?
+  onboardingPaso      Int           @default(0)
+  onboardingCompletado DateTime?
+  modelo              String        @default("barato")
+  prompt              String        @default("")
+  mensajes            Json
+  modulos             String[]
+  topeDia             Int
+  topeSemana          Int
+  topeMes             Int
+  precioPersonalizado Int?
+  emailContacto       String?
+  publicToken         String        @unique
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  canales             Channel[]
+  subscription        Subscription?
+  payments            Payment[]
+  usage               Usage[]
+  conversations       Conversation[]
+  turnos              Turno[]
+  ticket              Ticket?
+  usuario             ClientUser?
+}
+
+model ClientUser {
+  id             String            @id @default(cuid())
+  tenantId       String            @unique
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email          String            @unique
+  nombre         String
+  passwordHash   String
+  resetTokenHash String?           @unique
+  resetExpira    DateTime?
+  ultimoLogin    DateTime?
+  createdAt      DateTime          @default(now())
+  aceptaciones   LegalAcceptance[]
+}
+
+model LegalAcceptance {
+  id        String     @id @default(cuid())
+  userId    String
+  user      ClientUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documento String
+  version   String
+  ip        String?
+  userAgent String?
+  createdAt DateTime   @default(now())
+
+  @@index([userId, documento])
+}
+
+model Channel {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tipo       CanalTipo
+  endpointId String    @unique
+  etiqueta   String
+}
+
+model Usage {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periodo  String
+  count    Int    @default(0)
+
+  @@unique([tenantId, periodo])
+}
+
+model Conversation {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriberId String
+  historial    Json
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, subscriberId])
+}
+
+model Subscription {
+  tenantId        String     @id
+  tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  medio           MedioPago
+  estadoPago      EstadoPago @default(pendiente)
+  diaAbono        Int
+  vencimiento     DateTime
+  mpPreapprovalId String?    @unique
+  mpInitPoint     String?
+  updatedAt       DateTime   @updatedAt
+}
+
+model Payment {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  medio       MedioPago
+  importe     Int
+  periodo     String
+  externalId  String?   @unique
+  acreditaEn  DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Ticket {
+  id             String       @id @default(cuid())
+  tipo           TicketTipo   @default(ia_personalizada)
+  privacidadVersion String?
+  ip             String?
+  nombre         String
+  email          String
+  telefono       String?
+  empresa        String
+  rubro          String
+  necesidad      String
+  estado         TicketEstado @default(nuevo)
+  importeMensual Int?
+  notas          String?
+  tenantId       String?      @unique
+  tenant         Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Turno {
+  id                  String      @id @default(cuid())
+  tenantId            String
+  tenant              Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriberId        String
+  nombre              String
+  fecha               DateTime
+  estado              TurnoEstado @default(reservado)
+  recordatorioEnviado Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+
+  @@index([tenantId, fecha])
+}
