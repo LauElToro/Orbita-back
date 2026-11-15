@@ -20,6 +20,14 @@ const schema = z.object({
   MP_WEBHOOK_SECRET: z.string().default(''),
   TRANSFER_ALIAS: z.string().default('orbita.alias'),
   MANYCHAT_BASE_URL: z.string().default('https://api.manychat.com'),
+  SMTP_HOST: z.string().default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  SMTP_FROM: z.string().default(''),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+  GOOGLE_REDIRECT_URI: z.string().default(''),
 });
 
 export type Config = z.infer<typeof schema>;

@@ -9,6 +9,7 @@ export const keys = {
   lock: (tenantId: string) => `lock:tenant:${tenantId}`,
   uso: (tenantId: string, periodo: string) => `uso:${tenantId}:${periodo}`,
   rateLimit: (scope: string, id: string) => `rl:${scope}:${id}`,
+  googleState: (state: string) => `google:state:${state}`,
 };
 
 export const QUEUE_GENERACION = 'generacion';

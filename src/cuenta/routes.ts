@@ -9,6 +9,7 @@ import { documentosPendientes, registrarAceptacion } from '../legal/legal';
 import { getTenant } from '../tenants/repo';
 import { actualizarTenant } from '../tenants/service';
 import { leerUso } from '../usage/usage';
+import { completarGoogle, prepararGoogle } from './google';
 import {
   activarPropio,
   actualizarManychat,
@@ -23,6 +24,7 @@ import {
   pausarPropio,
   promptSchema,
   registrar,
+  pedirRestablecimiento,
   restablecer,
   textosSchema,
 } from './service';
@@ -56,6 +58,22 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
   app.post('/cuenta/login', async (req) => {
     await rateLimit(deps.redis, 'login-cliente', req.ip, 10, 900);
     return { token: firmar(await login(deps, req.body)) };
+  });
+
+  app.post('/cuenta/google/iniciar', async (req) => {
+    await rateLimit(deps.redis, 'google', req.ip, 20, 3600);
+    return prepararGoogle(deps, req.body);
+  });
+
+  app.post('/cuenta/google/callback', async (req) => {
+    await rateLimit(deps.redis, 'google-vuelta', req.ip, 20, 3600);
+    return { token: firmar(await completarGoogle(deps, req.body, evidencia(req))) };
+  });
+
+  app.post('/cuenta/olvide', async (req) => {
+    await rateLimit(deps.redis, 'olvide', req.ip, 5, 3600);
+    await pedirRestablecimiento(deps, req.body);
+    return { ok: true };
   });
 
   app.post('/cuenta/restablecer', async (req) => {

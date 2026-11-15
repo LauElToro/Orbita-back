@@ -5,6 +5,7 @@ import type { Config } from './config';
 import { OpenRouterClient, type AiClient } from './ai/openrouter';
 import { ManyChatClient, type MessengerClient } from './messaging/manychat';
 import { MercadoPagoClient, type PaymentsGateway } from './billing/mercadopago';
+import { crearCorreo, type Correo } from './correo/correo';
 import { QUEUE_GENERACION, QUEUE_TAREAS } from './lib/keys';
 
 export interface Deps {
@@ -16,6 +17,7 @@ export interface Deps {
   ai: AiClient;
   manychat: MessengerClient;
   mercadopago: PaymentsGateway;
+  correo: Correo;
   now: () => Date;
 }
 
@@ -35,6 +37,7 @@ export function createDeps(config: Config, overrides: Partial<Deps> = {}): Deps 
     ai: overrides.ai ?? new OpenRouterClient(config.OPENROUTER_BASE_URL, config.OPENROUTER_API_KEY),
     manychat: overrides.manychat ?? new ManyChatClient(config.MANYCHAT_BASE_URL),
     mercadopago: overrides.mercadopago ?? new MercadoPagoClient(config.MP_ACCESS_TOKEN, config.MP_WEBHOOK_SECRET),
+    correo: overrides.correo ?? crearCorreo(config),
     now: overrides.now ?? (() => new Date()),
   };
 }

@@ -11,6 +11,7 @@ import { slugify } from '../lib/slug';
 import { registrarAceptacion, type Evidencia, type DocumentoLegal } from '../legal/legal';
 import { MENSAJES_DEFAULT, leerMensajes } from '../tenants/defaults';
 import { getTenant, type TenantFull } from '../tenants/repo';
+import { avisoOrbita, enviarCorreo } from '../correo/correo';
 import { actualizarTenant, appTokenMaskDe, canalSchema, importeDe } from '../tenants/service';
 
 const PLANES_AUTOGESTION = ['mensajes', 'turnos', 'completo'] as const;
@@ -76,6 +77,16 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
   });
   const usuario = tenant.usuario!;
   await registrarAceptacion(deps.prisma, usuario.id, ['terminos', 'privacidad'], evidencia);
+  await enviarCorreo(
+    deps.correo,
+    avisoOrbita(
+      input.email,
+      'Tu cuenta de Orbita está lista',
+      `Hola ${input.nombre}, ya creamos la cuenta de ${input.negocio}.`,
+      'Podés recorrer el panel ahora. La IA se habilita cuando se acredita el pago con Mercado Pago.',
+      { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
+    ),
+  );
   return { userId: usuario.id, tenantId: tenant.id };
 }
 
@@ -107,6 +118,24 @@ export async function generarReset(deps: Deps, tenantId: string): Promise<{ link
     data: { resetTokenHash: sha256(token), resetExpira: expira },
   });
   return { link: `${deps.config.PUBLIC_URL}/restablecer/${token}`, expira };
+}
+
+/** Siempre responde igual, exista o no la cuenta, para no revelar qué emails están registrados. */
+export async function pedirRestablecimiento(deps: Deps, raw: unknown) {
+  const { email } = z.object({ email: z.string().trim().toLowerCase().email() }).parse(raw);
+  const usuario = await deps.prisma.clientUser.findUnique({ where: { email } });
+  if (!usuario) return;
+  const { link } = await generarReset(deps, usuario.tenantId);
+  await enviarCorreo(
+    deps.correo,
+    avisoOrbita(
+      email,
+      'Restablecé tu contraseña de Orbita',
+      `Hola ${usuario.nombre}, recibimos un pedido para cambiar la contraseña de tu cuenta.`,
+      'El link vence en 24 horas. Si no pediste este cambio, ignorá el mensaje.',
+      { texto: 'Elegir una contraseña nueva', url: link },
+    ),
+  );
 }
 
 /** Da acceso a una ficha creada por el equipo: el cliente define su contraseña con el link y acepta los documentos al entrar. */
