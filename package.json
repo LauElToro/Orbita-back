@@ -2,7 +2,7 @@
   "name": "orbita-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "API y worker de Orbita: bots de IA para comercios sobre ManyChat",
+  "description": "API y worker de Orbita: bots de IA para comercios en WhatsApp, Instagram y TikTok",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

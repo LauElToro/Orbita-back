@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import type { Config } from './config';
 import { OpenRouterClient, type AiClient } from './ai/openrouter';
-import { ManyChatClient, type MessengerClient } from './messaging/manychat';
+import { CanalesClient, type MessengerClient } from './messaging/canales';
 import { MercadoPagoClient, type PaymentsGateway } from './billing/mercadopago';
 import { crearCorreo, type Correo } from './correo/correo';
 import { QUEUE_GENERACION, QUEUE_TAREAS } from './lib/keys';
@@ -15,7 +15,7 @@ export interface Deps {
   colaGeneracion: Queue;
   colaTareas: Queue;
   ai: AiClient;
-  manychat: MessengerClient;
+  mensajeria: MessengerClient;
   mercadopago: PaymentsGateway;
   correo: Correo;
   now: () => Date;
@@ -35,7 +35,14 @@ export function createDeps(config: Config, overrides: Partial<Deps> = {}): Deps 
     colaGeneracion: overrides.colaGeneracion ?? new Queue(QUEUE_GENERACION, { connection: bull }),
     colaTareas: overrides.colaTareas ?? new Queue(QUEUE_TAREAS, { connection: bull }),
     ai: overrides.ai ?? new OpenRouterClient(config.OPENROUTER_BASE_URL, config.OPENROUTER_API_KEY),
-    manychat: overrides.manychat ?? new ManyChatClient(config.MANYCHAT_BASE_URL),
+    mensajeria:
+      overrides.mensajeria ??
+      new CanalesClient({
+        metaGraphUrl: config.META_GRAPH_URL,
+        instagramGraphUrl: config.INSTAGRAM_GRAPH_URL,
+        metaVersion: config.META_API_VERSION,
+        tiktokUrl: config.TIKTOK_API_URL,
+      }),
     mercadopago: overrides.mercadopago ?? new MercadoPagoClient(config.MP_ACCESS_TOKEN, config.MP_WEBHOOK_SECRET),
     correo: overrides.correo ?? crearCorreo(config),
     now: overrides.now ?? (() => new Date()),

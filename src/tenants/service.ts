@@ -12,11 +12,35 @@ import { getTenant, rebuildIndex, tenantInclude, type TenantFull } from './repo'
 
 const PLAN_IDS = ['mensajes', 'turnos', 'completo', 'personalizado'] as const;
 
+/** `token` es el access token de la plataforma. Si no viene, se conserva el que ya tenía ese canal. */
 export const canalSchema = z.object({
   tipo: z.enum(['whatsapp', 'instagram', 'tiktok']),
   endpointId: z.string().trim().min(1),
   etiqueta: z.string().trim().min(1),
+  token: z.string().trim().min(10).optional(),
 });
+
+type CanalInput = z.infer<typeof canalSchema>;
+
+function canalesParaGuardar(deps: Deps, canales: CanalInput[], previos: { tipo: string; endpointId: string; tokenEnc: string | null }[] = []) {
+  return canales.map(({ token, ...c }) => ({
+    ...c,
+    tokenEnc: token
+      ? encrypt(token, deps.config.ENCRYPTION_KEY)
+      : (previos.find((p) => p.endpointId === c.endpointId && p.tipo === c.tipo)?.tokenEnc ?? null),
+  }));
+}
+
+/** Canales para mostrar: el token nunca sale, solo si está cargado y sus últimos 4 caracteres. */
+export function canalesDto(deps: Deps, canales: TenantFull['canales']) {
+  return canales.map(({ tipo, endpointId, etiqueta, tokenEnc }) => ({
+    tipo,
+    endpointId,
+    etiqueta,
+    conectado: Boolean(tokenEnc),
+    tokenMask: tokenMaskDe(deps, tokenEnc),
+  }));
+}
 
 const topesSchema = z.object({
   dia: z.number().int().positive(),
@@ -33,8 +57,6 @@ export const altaSchema = z.object({
   planId: z.enum(PLAN_IDS),
   medio: z.enum(['mercadopago', 'transferencia']),
   canales: z.array(canalSchema).min(1),
-  pageId: z.string().trim().min(1),
-  appToken: z.string().trim().min(1),
   prompt: z.string().default(''),
   emailContacto: z.string().email().optional(),
   precioPersonalizado: z.number().int().positive().optional(),
@@ -58,8 +80,6 @@ export const patchSchema = z.object({
     })
     .partial()
     .optional(),
-  pageId: z.string().trim().min(1).optional(),
-  appToken: z.string().trim().min(1).optional(),
   emailContacto: z.string().email().nullable().optional(),
   canales: z.array(canalSchema).min(1).optional(),
   planId: z.enum(PLAN_IDS).optional(),
@@ -113,9 +133,6 @@ export async function crearTenant(deps: Deps, raw: unknown): Promise<TenantFull>
         nombre: input.nombre,
         planId: plan.id,
         timezone,
-        pageId: input.pageId,
-        appTokenEnc: encrypt(input.appToken, deps.config.ENCRYPTION_KEY),
-        apiKey: randomToken(24),
         publicToken: randomToken(18),
         prompt: input.prompt,
         mensajes: { ...MENSAJES_DEFAULT },
@@ -125,7 +142,7 @@ export async function crearTenant(deps: Deps, raw: unknown): Promise<TenantFull>
         topeMes: topes.mes,
         precioPersonalizado: input.precioPersonalizado ?? null,
         emailContacto: input.emailContacto ?? null,
-        canales: { create: input.canales },
+        canales: { create: canalesParaGuardar(deps, input.canales) },
         subscription: {
           create: {
             medio: input.medio,
@@ -152,8 +169,6 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
   if (input.nombre) data.nombre = input.nombre;
   if (input.timezone) data.timezone = input.timezone;
   if (input.modelo) data.modelo = input.modelo;
-  if (input.pageId) data.pageId = input.pageId;
-  if (input.appToken) data.appTokenEnc = encrypt(input.appToken, deps.config.ENCRYPTION_KEY);
   if (input.emailContacto !== undefined) data.emailContacto = input.emailContacto;
   if (input.mensajes) data.mensajes = { ...leerMensajes(actual.mensajes), ...input.mensajes };
   if (input.precioPersonalizado) data.precioPersonalizado = input.precioPersonalizado;
@@ -200,7 +215,9 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
       await tx.tenant.update({ where: { id }, data });
       if (input.canales) {
         await tx.channel.deleteMany({ where: { tenantId: id } });
-        await tx.channel.createMany({ data: input.canales.map((c) => ({ ...c, tenantId: id })) });
+        await tx.channel.createMany({
+          data: canalesParaGuardar(deps, input.canales, actual.canales).map((c) => ({ ...c, tenantId: id })),
+        });
       }
     });
   } catch (err) {
@@ -222,11 +239,11 @@ export function importeDe(tenant: TenantFull): number {
   return precioDe(tenant.plan, tenant.subscription?.medio ?? 'transferencia', tenant.precioPersonalizado);
 }
 
-/** El appToken nunca sale completo. `null` si todavía no se cargó. */
-export function appTokenMaskDe(deps: Deps, appTokenEnc: string | null): string | null {
-  if (!appTokenEnc) return null;
+/** Un token nunca sale completo. `null` si todavía no se cargó. */
+export function tokenMaskDe(deps: Deps, tokenEnc: string | null): string | null {
+  if (!tokenEnc) return null;
   try {
-    return mask(decrypt(appTokenEnc, deps.config.ENCRYPTION_KEY));
+    return mask(decrypt(tokenEnc, deps.config.ENCRYPTION_KEY));
   } catch {
     return '****';
   }
@@ -234,11 +251,10 @@ export function appTokenMaskDe(deps: Deps, appTokenEnc: string | null): string |
 
 /** Ficha para el panel del equipo. */
 export function fichaDto(deps: Deps, tenant: TenantFull) {
-  const { appTokenEnc, ...resto } = tenant;
   return {
-    ...resto,
+    ...tenant,
+    canales: canalesDto(deps, tenant.canales),
     mensajes: leerMensajes(tenant.mensajes),
-    appTokenMask: appTokenMaskDe(deps, appTokenEnc),
     importe: importeDe(tenant),
     linkPublico: `${deps.config.PUBLIC_URL}/p/${tenant.publicToken}`,
   };

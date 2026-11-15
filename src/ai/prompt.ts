@@ -26,6 +26,7 @@ export function construirMensajes(input: PromptInput): ChatMessage[] {
     '## Información del negocio',
     input.promptNegocio.trim() || '(sin información cargada)',
     '## Reglas',
+    'Escribí como en un chat: corto, claro y sin Markdown (nada de **, # ni tablas).',
     ...input.instruccionesModulos.filter(Boolean),
   ]
     .filter(Boolean)
@@ -36,6 +37,16 @@ export function construirMensajes(input: PromptInput): ChatMessage[] {
     .map((h) => ({ role: h.rol, content: h.texto }));
 
   return [{ role: 'system', content: system }, ...historial, { role: 'user', content: input.texto }];
+}
+
+/** Los chats no renderizan Markdown: se sacan negritas dobles, títulos y viñetas con asterisco. */
+export function limpiarFormato(texto: string): string {
+  return texto
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*\*\s+/gm, '- ')
+    .trim();
 }
 
 export function leerHistorial(raw: unknown): Intervencion[] {

@@ -5,6 +5,7 @@ import { parsearEtiquetas } from '../modules/turnos';
 import { leerMensajes } from '../tenants/defaults';
 import type { TenantFull } from '../tenants/repo';
 import { armarContexto } from './contexto';
+import { limpiarFormato } from './prompt';
 
 export const simulacionSchema = z.object({
   texto: z.string().trim().min(1).max(1000),
@@ -44,5 +45,5 @@ export async function simular(deps: Deps, tenant: TenantFull, raw: unknown): Pro
   const acciones = tenant.modulos.includes('turnos')
     ? [...reservas.map((r) => `Reservaría un turno el ${r}`), ...cancelaciones.map((c) => `Cancelaría el turno ${c}`)]
     : [];
-  return { texto: limpio, handoff: false, acciones };
+  return { texto: limpiarFormato(limpio), handoff: false, acciones };
 }

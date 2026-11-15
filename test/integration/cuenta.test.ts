@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { registrarPago } from '../../src/billing/service';
-import { alta, createTestEnv, registrarCliente, registroBase, type TestEnv } from './helpers';
+import { alta, createTestEnv, registrarCliente, registroBase, webhookMeta, type TestEnv } from './helpers';
 
 let env: TestEnv;
 
@@ -49,9 +49,9 @@ describe('registro y acceso', () => {
       plan: { id: 'turnos' },
       suscripcion: { estadoPago: 'pendiente', importe: 84_000, medio: 'mercadopago' },
       transferencia: null,
-      onboarding: { paso: 0, completado: null, requisitos: { pago: false, manychat: false, canal: false, prompt: false } },
+      onboarding: { paso: 0, completado: null, requisitos: { pago: false, canal: false, prompt: false } },
     });
-    expect(me.manychat.entrada).toBe('https://orbita.test/api/webhooks/manychat/entrada');
+    expect(me.manychat).toBeUndefined();
 
     const aceptaciones = await env.deps.prisma.legalAcceptance.findMany({ orderBy: { documento: 'asc' } });
     expect(aceptaciones.map((a) => [a.documento, a.version, a.ip])).toEqual([
@@ -154,15 +154,20 @@ describe('onboarding', () => {
 
     await pagar('peluqueria-luna');
 
-    const mc = await llamar(headers, 'PUT', '/cuenta/manychat', { pageId: '555', appToken: 'token-manychat-largo' });
-    expect(mc.json().manychat).toMatchObject({ pageId: '555', appTokenMask: '****argo' });
-
     const tresCanales = ['a', 'b', 'c'].map((e) => ({ tipo: 'whatsapp', endpointId: e, etiqueta: e }));
     expect((await llamar(headers, 'PUT', '/cuenta/canales', { canales: tresCanales })).statusCode).toBe(400);
-    const canales = await llamar(headers, 'PUT', '/cuenta/canales', {
+    const sinToken = await llamar(headers, 'PUT', '/cuenta/canales', {
       canales: [{ tipo: 'instagram', endpointId: 'ig-luna', etiqueta: 'Instagram' }],
     });
-    expect(canales.json().canales).toHaveLength(1);
+    expect(sinToken.json().canales).toEqual([expect.objectContaining({ conectado: false, tokenMask: null })]);
+    expect(sinToken.json().onboarding.requisitos.canal).toBe(false);
+    const canales = await llamar(headers, 'PUT', '/cuenta/canales', {
+      canales: [{ tipo: 'instagram', endpointId: 'ig-luna', etiqueta: 'Instagram', token: 'token-instagram-largo' }],
+    });
+    expect(canales.json().canales).toEqual([
+      { tipo: 'instagram', endpointId: 'ig-luna', etiqueta: 'Instagram', conectado: true, tokenMask: '****argo' },
+    ]);
+    expect(JSON.stringify(canales.json())).not.toContain('token-instagram-largo');
 
     expect((await llamar(headers, 'PUT', '/cuenta/perfil', { descripcion: 'corto' })).statusCode).toBe(400);
     const conPerfil = (await llamar(headers, 'PUT', '/cuenta/perfil', perfil)).json();
@@ -194,13 +199,12 @@ describe('onboarding', () => {
     expect(activa.negocio).toMatchObject({ estado: 'activo', pausaMotivo: null });
     expect(activa.onboarding.completado).toBeTruthy();
 
-    const entrada = await env.app.inject({
-      method: 'POST',
-      url: '/webhooks/manychat/entrada',
-      headers: { 'x-orbita-key': activa.manychat.apiKey },
-      payload: { pageId: '555', subscriberId: '1', endpointId: 'ig-luna', texto: 'hola' },
+    const entrada = await webhookMeta(env, {
+      object: 'instagram',
+      entry: [{ id: 'ig-luna', messaging: [{ sender: { id: 'IGSID-1' }, recipient: { id: 'ig-luna' }, message: { mid: 'm-1', text: 'hola' } }] }],
     });
-    expect(entrada.json().estado).toBe('pendiente');
+    expect(entrada.statusCode).toBe(200);
+    expect(await env.deps.colaGeneracion.getJobCounts('waiting')).toMatchObject({ waiting: 1 });
 
     expect((await llamar(headers, 'POST', '/cuenta/pausar')).json().negocio.estado).toBe('pausado');
     expect((await llamar(headers, 'POST', '/cuenta/activar')).json().negocio.estado).toBe('activo');
@@ -252,7 +256,7 @@ describe('plan y pago del cliente', () => {
     await registrarCliente(env);
     await alta(env, { clientId: 'otro', canales: [{ tipo: 'whatsapp', endpointId: 'x', etiqueta: 'x' }] });
     const ficha = (await llamar(env.auth(), 'GET', '/clientes/peluqueria-luna')).json();
-    expect(ficha).toMatchObject({ usuario: { email: 'sofia@luna.com' }, appTokenMask: null, pausaMotivo: 'onboarding' });
+    expect(ficha).toMatchObject({ usuario: { email: 'sofia@luna.com' }, canales: [], pausaMotivo: 'onboarding' });
     expect(ficha.usuario.passwordHash).toBeUndefined();
   });
 });

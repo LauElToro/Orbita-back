@@ -79,9 +79,6 @@ model Tenant {
   plan                Plan          @relation(fields: [planId], references: [id])
   planElegido         Boolean       @default(true)
   timezone            String        @default("America/Argentina/Buenos_Aires")
-  pageId              String?
-  appTokenEnc         String?
-  apiKey              String        @unique
   rubro               String?
   perfil              Json?
   onboardingPaso      Int           @default(0)
@@ -96,6 +93,11 @@ model Tenant {
   precioPersonalizado Int?
   emailContacto       String?
   publicToken         String        @unique
+  webActiva           Boolean       @default(false)
+  webClave            String?       @unique
+  webOrigenes         String[]      @default([])
+  webBienvenida       String?
+  webColor            String?
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   canales             Channel[]
@@ -142,6 +144,7 @@ model Channel {
   tipo       CanalTipo
   endpointId String    @unique
   etiqueta   String
+  tokenEnc   String?
 }
 
 model Usage {
@@ -159,6 +162,11 @@ model Conversation {
   tenantId     String
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   subscriberId String
+  canal        CanalTipo?
+  endpointId   String?
+  destino      String?
+  nombre       String?
+  handoffHasta DateTime?
   historial    Json
   updatedAt    DateTime @updatedAt
 

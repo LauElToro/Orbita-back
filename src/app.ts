@@ -5,23 +5,26 @@ import type { Deps } from './deps';
 import { registerAuth } from './admin/auth';
 import { HttpError } from './lib/errors';
 import { registerMessagingRoutes } from './messaging/routes';
-import { RespuestaWaiter } from './messaging/respuestas';
 import { registerTenantRoutes } from './tenants/routes';
 import { registerBillingRoutes } from './billing/routes';
 import { registerTicketRoutes } from './tickets/routes';
 import { registerPublicRoutes } from './tenants/public';
 import { registerCuentaRoutes } from './cuenta/routes';
 import { registerMetricasRoutes } from './admin/metricas';
+import { registerWebRoutes } from './web/routes';
 
 export interface AppOptions {
   logger?: boolean;
-  waiter?: RespuestaWaiter;
 }
 
 export async function buildApp(deps: Deps, opts: AppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
 
-  await app.register(cors, { origin: deps.config.CORS_ORIGIN.split(',').map((o) => o.trim()) });
+  const panel = deps.config.CORS_ORIGIN.split(',').map((o) => o.trim());
+  // La integración web se llama desde la web de cada comercio; los dominios se validan por ficha en la ruta.
+  await app.register(cors, {
+    delegator: (req, cb) => cb(null, { origin: (req.url ?? '').startsWith('/web/') ? true : panel }),
+  });
 
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof ZodError) {
@@ -36,11 +39,6 @@ export async function buildApp(deps: Deps, opts: AppOptions = {}): Promise<Fasti
     return reply.code(500).send({ error: 'Error interno' });
   });
 
-  const waiter = opts.waiter ?? new RespuestaWaiter(deps.redis);
-  app.addHook('onClose', async () => {
-    if (!opts.waiter) await waiter.close();
-  });
-
   app.get('/health', async () => {
     await deps.redis.ping();
     await deps.prisma.$queryRaw`SELECT 1`;
@@ -48,13 +46,14 @@ export async function buildApp(deps: Deps, opts: AppOptions = {}): Promise<Fasti
   });
 
   await registerAuth(app, deps);
-  registerMessagingRoutes(app, deps, waiter);
+  registerMessagingRoutes(app, deps);
   registerTenantRoutes(app, deps);
   registerBillingRoutes(app, deps);
   registerTicketRoutes(app, deps);
   registerPublicRoutes(app, deps);
   registerCuentaRoutes(app, deps);
   registerMetricasRoutes(app, deps);
+  registerWebRoutes(app, deps);
 
   return app;
 }

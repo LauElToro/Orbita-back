@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import type { Deps } from '../deps';
 import { compilarPrompt, perfilSchema } from '../ai/perfil';
-import { encrypt, randomToken, sha256 } from '../lib/crypto';
+import { randomToken, sha256 } from '../lib/crypto';
 import { addDays, localParts } from '../lib/dates';
 import { conflict, HttpError, notFound } from '../lib/errors';
 import { hashPassword, verifyPassword } from '../lib/password';
@@ -12,7 +12,8 @@ import { registrarAceptacion, type Evidencia, type DocumentoLegal } from '../leg
 import { MENSAJES_DEFAULT, leerMensajes } from '../tenants/defaults';
 import { getTenant, type TenantFull } from '../tenants/repo';
 import { avisoOrbita, enviarCorreo } from '../correo/correo';
-import { actualizarTenant, appTokenMaskDe, canalSchema, importeDe } from '../tenants/service';
+import { actualizarTenant, canalesDto, canalSchema, importeDe } from '../tenants/service';
+import { webDto } from '../web/service';
 
 const PLANES_AUTOGESTION = ['mensajes', 'turnos', 'completo'] as const;
 const password = z.string().min(8, 'La contraseña necesita al menos 8 caracteres').max(200);
@@ -62,7 +63,6 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
       planId: plan.id,
       planElegido: Boolean(input.planId),
       timezone,
-      apiKey: randomToken(24),
       publicToken: randomToken(18),
       mensajes: { ...MENSAJES_DEFAULT },
       modulos: plan.modulos,
@@ -170,7 +170,6 @@ export async function restablecer(deps: Deps, raw: unknown) {
 
 export interface Requisitos {
   pago: boolean;
-  manychat: boolean;
   canal: boolean;
   prompt: boolean;
 }
@@ -178,8 +177,7 @@ export interface Requisitos {
 export function requisitosOnboarding(tenant: TenantFull): Requisitos {
   return {
     pago: tenant.subscription?.estadoPago === 'al_dia',
-    manychat: Boolean(tenant.pageId && tenant.appTokenEnc),
-    canal: tenant.canales.length > 0,
+    canal: tenant.canales.some((c) => c.tokenEnc) || tenant.webActiva,
     prompt: tenant.prompt.trim().length > 0,
   };
 }
@@ -187,7 +185,6 @@ export function requisitosOnboarding(tenant: TenantFull): Requisitos {
 export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: DocumentoLegal[]) {
   const sub = tenant.subscription;
   const importe = importeDe(tenant);
-  const api = `${deps.config.PUBLIC_URL}/api/webhooks/manychat`;
   return {
     usuario: tenant.usuario ? { nombre: tenant.usuario.nombre, email: tenant.usuario.email } : null,
     legalPendiente,
@@ -206,14 +203,8 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
     },
     plan: tenant.plan,
     planElegido: tenant.planElegido,
-    canales: tenant.canales.map(({ tipo, endpointId, etiqueta }) => ({ tipo, endpointId, etiqueta })),
-    manychat: {
-      pageId: tenant.pageId,
-      appTokenMask: appTokenMaskDe(deps, tenant.appTokenEnc),
-      apiKey: tenant.apiKey,
-      entrada: `${api}/entrada`,
-      salida: `${api}/salida`,
-    },
+    canales: canalesDto(deps, tenant.canales),
+    web: webDto(deps, tenant),
     suscripcion: sub
       ? { medio: sub.medio, estadoPago: sub.estadoPago, vencimiento: sub.vencimiento, importe, mpInitPoint: sub.mpInitPoint }
       : null,
@@ -244,21 +235,10 @@ export const promptSchema = z.object({ prompt: z.string().max(20_000) });
 
 export const canalesSchema = z.object({ canales: z.array(canalSchema).min(1) });
 
-export const manychatSchema = z.object({ pageId: z.string().trim().min(1), appToken: z.string().trim().min(10) });
-
 export const planSchema = z.object({
   planId: z.enum(PLANES_AUTOGESTION).optional(),
   medio: z.literal('mercadopago').optional(),
 });
-
-export async function actualizarManychat(deps: Deps, tenantId: string, raw: unknown) {
-  const { pageId, appToken } = manychatSchema.parse(raw);
-  await deps.prisma.tenant.update({
-    where: { id: tenantId },
-    data: { pageId, appTokenEnc: encrypt(appToken, deps.config.ENCRYPTION_KEY) },
-  });
-  return getTenant(deps.prisma, tenantId);
-}
 
 export async function cambiarPlan(deps: Deps, tenantId: string, raw: unknown) {
   const tenant = await getTenant(deps.prisma, tenantId);
@@ -283,8 +263,7 @@ export async function avanzarOnboarding(deps: Deps, tenantId: string, raw: unkno
 
 const FALTANTES: Record<keyof Requisitos, string> = {
   pago: 'el pago del plan acreditado',
-  manychat: 'conectar tu cuenta de ManyChat',
-  canal: 'cargar al menos un canal',
+  canal: 'conectar al menos un canal con su token o activar la integración web',
   prompt: 'contarle a tu IA sobre tu negocio',
 };
 

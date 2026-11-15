@@ -31,17 +31,16 @@ describe('auth del equipo', () => {
 });
 
 describe('fichas', () => {
-  it('alta crea ficha con módulos y topes del plan, sin exponer el appToken', async () => {
+  it('alta crea ficha con módulos y topes del plan, sin exponer el token del canal', async () => {
     const ficha = await alta(env);
     expect(ficha).toMatchObject({
       id: 'pizzeria-norte',
       modulos: ['faq', 'handoff', 'turnos'],
       topeDia: 200,
-      appTokenMask: '****oken',
+      canales: [{ tipo: 'whatsapp', endpointId: 'PN-NORTE', conectado: true, tokenMask: '****oken' }],
       importe: 80_000,
     });
-    expect(ficha.appTokenEnc).toBeUndefined();
-    expect(JSON.stringify(ficha)).not.toContain('manychat-secret-token');
+    expect(JSON.stringify(ficha)).not.toMatch(/whatsapp-secret-token|tokenEnc/);
     expect(ficha.linkPublico).toBe(`https://orbita.test/p/${ficha.publicToken}`);
 
     const lista = (await req('GET', '/clientes')).json();
@@ -76,16 +75,15 @@ describe('fichas', () => {
 
     const ok = await req('PATCH', '/clientes/pizzeria-norte', {
       planId: 'mensajes',
-      canales: [{ tipo: 'whatsapp', endpointId: 'a', etiqueta: 'a' }],
+      canales: [{ tipo: 'whatsapp', endpointId: 'a', etiqueta: 'a', token: 'nuevo-token-9999' }],
       mensajes: { tope: 'Nuevo tope' },
-      appToken: 'nuevo-token-9999',
     });
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toMatchObject({
       planId: 'mensajes',
       modulos: ['faq', 'handoff'],
       topeMes: 2_000,
-      appTokenMask: '****9999',
+      canales: [{ endpointId: 'a', tokenMask: '****9999' }],
       mensajes: { tope: 'Nuevo tope', handoff: 'Te paso con alguien del local.' },
     });
     expect(await env.deps.redis.hget('idx:endpoints', 'b')).toBeNull();
@@ -95,6 +93,9 @@ describe('fichas', () => {
 
     const medio = await req('PATCH', '/clientes/pizzeria-norte', { medio: 'mercadopago' });
     expect(medio.json()).toMatchObject({ importe: 42_000, subscription: { medio: 'mercadopago' } });
+
+    const sinToken = await req('PATCH', '/clientes/pizzeria-norte', { canales: [{ tipo: 'whatsapp', endpointId: 'a', etiqueta: 'Local' }] });
+    expect(sinToken.json().canales).toEqual([expect.objectContaining({ etiqueta: 'Local', tokenMask: '****9999' })]);
   });
 });
 
@@ -163,7 +164,7 @@ describe('página del cliente', () => {
       mercadopago: null,
       uso: { mes: 0, tope: 4_000 },
     });
-    expect(JSON.stringify(body)).not.toMatch(/prompt|appToken|apiKey|manychat-secret/);
+    expect(JSON.stringify(body)).not.toMatch(/prompt|token":|whatsapp-secret/);
     expect((await env.app.inject({ method: 'GET', url: '/publico/nope' })).statusCode).toBe(404);
   });
 
@@ -181,18 +182,28 @@ describe('página del cliente', () => {
 });
 
 describe('recordatorios', () => {
-  it('avisa el día anterior a los turnos de mañana', async () => {
+  it('avisa el día anterior a los turnos de mañana por el canal de la charla', async () => {
     await alta(env, { planId: 'completo' });
+    await env.deps.prisma.conversation.createMany({
+      data: ['999', '998', '997'].map((subscriberId) => ({
+        tenantId: 'pizzeria-norte',
+        subscriberId,
+        historial: [],
+        canal: 'whatsapp' as const,
+        endpointId: 'PN-NORTE',
+        destino: `54911${subscriberId}`,
+      })),
+    });
     await env.deps.prisma.turno.createMany({
       data: [
         { tenantId: 'pizzeria-norte', subscriberId: '999', nombre: 'Ana', fecha: new Date('2026-11-15T23:30:00Z') },
         { tenantId: 'pizzeria-norte', subscriberId: '998', nombre: 'Leo', fecha: new Date('2026-11-17T23:30:00Z') },
+        { tenantId: 'pizzeria-norte', subscriberId: 'sin-charla', nombre: 'Eva', fecha: new Date('2026-11-15T22:00:00Z') },
       ],
     });
     expect(await enviarRecordatorios(env.deps)).toBe(1);
-    expect(env.manychat.sendText).toHaveBeenCalledWith(
-      'manychat-secret-token',
-      '999',
+    expect(env.mensajeria.enviar).toHaveBeenCalledWith(
+      { canal: 'whatsapp', endpointId: 'PN-NORTE', destino: '54911999', token: 'whatsapp-secret-token' },
       'Mañana tenés turno a las 20:30. Respondé SI para confirmar.',
     );
     expect(await enviarRecordatorios(env.deps)).toBe(0);

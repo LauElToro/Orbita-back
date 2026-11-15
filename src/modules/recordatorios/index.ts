@@ -1,6 +1,6 @@
 import type { Deps } from '../../deps';
-import { decrypt } from '../../lib/crypto';
 import { addDays, fmt, localParts } from '../../lib/dates';
+import { destinoDe } from '../../messaging/destino';
 import { leerMensajes } from '../../tenants/defaults';
 import type { Modulo } from '../types';
 
@@ -32,15 +32,18 @@ export const recordatorios: Modulo = {
   },
 };
 
-/** Envía el aviso del día anterior a los turnos de mañana (en la zona horaria de cada ficha). */
+/**
+ * Envía el aviso del día anterior a los turnos de mañana (en la zona horaria de cada ficha),
+ * por el canal de la última charla de esa persona.
+ */
 export async function enviarRecordatorios(deps: Deps): Promise<number> {
   const now = deps.now();
   const tenants = await deps.prisma.tenant.findMany({
-    where: { estado: 'activo', modulos: { has: 'recordatorios' }, appTokenEnc: { not: null } },
+    where: { estado: 'activo', modulos: { has: 'recordatorios' } },
+    include: { canales: true },
   });
   let enviados = 0;
   for (const tenant of tenants) {
-    if (!tenant.appTokenEnc) continue;
     const manana = localParts(addDays(now, 1), tenant.timezone);
     const clave = fmt(manana.y, manana.m, manana.d);
     const candidatos = await deps.prisma.turno.findMany({
@@ -52,13 +55,17 @@ export async function enviarRecordatorios(deps: Deps): Promise<number> {
       },
     });
     const mensajes = leerMensajes(tenant.mensajes);
-    const appToken = decrypt(tenant.appTokenEnc, deps.config.ENCRYPTION_KEY);
     for (const turno of candidatos) {
       const l = localParts(turno.fecha, tenant.timezone);
       if (fmt(l.y, l.m, l.d) !== clave) continue;
       const hora = `${String(l.hh).padStart(2, '0')}:${String(l.mm).padStart(2, '0')}`;
+      const conv = await deps.prisma.conversation.findUnique({
+        where: { tenantId_subscriberId: { tenantId: tenant.id, subscriberId: turno.subscriberId } },
+      });
+      const destino = destinoDe(deps, tenant, conv);
+      if (!destino) continue;
       try {
-        await deps.manychat.sendText(appToken, turno.subscriberId, textoRecordatorio(mensajes.recordatorio, hora));
+        await deps.mensajeria.enviar(destino, textoRecordatorio(mensajes.recordatorio, hora));
         await deps.prisma.turno.update({ where: { id: turno.id }, data: { recordatorioEnviado: true } });
         enviados++;
       } catch (err) {

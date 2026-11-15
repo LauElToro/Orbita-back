@@ -17,7 +17,7 @@ import type { Config } from '../../src/config';
 const KEY = 'a'.repeat(64);
 
 describe('crypto', () => {
-  it('cifra y descifra el appToken', () => {
+  it('cifra y descifra el token del canal', () => {
     const enc = encrypt('secreto-123', KEY);
     expect(enc).not.toContain('secreto');
     expect(decrypt(enc, KEY)).toBe('secreto-123');
@@ -31,9 +31,10 @@ describe('crypto', () => {
 });
 
 describe('dedupe', () => {
-  it('normaliza el texto en la clave', () => {
-    expect(keys.dedupe('1', '2', ' Hola ')).toBe(keys.dedupe('1', '2', 'hola'));
-    expect(keys.dedupe('1', '2', 'hola')).not.toBe(keys.dedupe('1', '3', 'hola'));
+  it('la clave depende del canal y del id del mensaje', () => {
+    expect(keys.dedupe('whatsapp', 'wamid.1')).toBe(keys.dedupe('whatsapp', 'wamid.1'));
+    expect(keys.dedupe('whatsapp', 'wamid.1')).not.toBe(keys.dedupe('instagram', 'wamid.1'));
+    expect(keys.dedupe('whatsapp', 'wamid.1')).not.toBe(keys.dedupe('whatsapp', 'wamid.2'));
   });
 });
 

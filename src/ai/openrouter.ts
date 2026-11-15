@@ -23,7 +23,8 @@ export class OpenRouterClient implements AiClient {
         'Content-Type': 'application/json',
         'X-Title': 'Orbita',
       },
-      body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 600 }),
+      // Sin razonamiento: responde en menos de un segundo y no gasta el max_tokens pensando (eso dejaba respuestas vacías).
+      body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 600, reasoning: { effort: 'none' } }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${await res.text()}`);

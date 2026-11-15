@@ -1,43 +1,60 @@
-import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Deps } from '../deps';
 import { safeEqual } from '../lib/crypto';
 import { HttpError } from '../lib/errors';
-import { procesarEntrada } from './entrada';
-import { esperarRespuesta, type RespuestaWaiter } from './respuestas';
+import { recibirMensaje } from './entrada';
+import { firmaMetaValida, firmaTiktokValida, leerMeta, leerTiktok, type Entrante } from './webhooks';
 
-const salidaQuery = z.object({
-  messageId: z.string().uuid(),
-  esperaMs: z.coerce.number().int().min(0).optional(),
-});
+const crudo = new WeakMap<FastifyRequest, string>();
 
-function apiKeyDe(headers: Record<string, unknown>): string | undefined {
-  const v = headers['x-orbita-key'];
-  return typeof v === 'string' ? v : undefined;
-}
-
-export function registerMessagingRoutes(app: FastifyInstance, deps: Deps, waiter: RespuestaWaiter): void {
-  app.post('/webhooks/manychat/entrada', async (req) => {
-    return procesarEntrada(deps, req.body, apiKeyDe(req.headers));
-  });
-
-  app.get('/webhooks/manychat/salida', async (req, reply) => {
-    const { messageId, esperaMs } = salidaQuery.parse(req.query);
-    const espera = Math.min(esperaMs ?? deps.config.LONG_POLL_MS, deps.config.LONG_POLL_MS);
-
-    const apiKey = apiKeyDe(req.headers);
-    const resp = await esperarRespuesta(deps.redis, waiter, messageId, 0);
-    if (!resp) return reply.code(404).send({ ok: false, messageId, estado: 'desconocido', texto: '' });
-
-    const tenant = await deps.prisma.tenant.findUnique({
-      where: { id: resp.tenantId },
-      select: { apiKey: true },
+export function registerMessagingRoutes(app: FastifyInstance, deps: Deps): void {
+  app.register(async (webhooks) => {
+    webhooks.removeContentTypeParser('application/json');
+    webhooks.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+      crudo.set(req, String(body));
+      try {
+        done(null, body ? JSON.parse(String(body)) : {});
+      } catch {
+        done(new HttpError(400, 'JSON inválido'), undefined);
+      }
     });
-    if (!tenant || !apiKey || !safeEqual(apiKey, tenant.apiKey)) {
-      throw new HttpError(401, 'X-Orbita-Key inválida');
-    }
 
-    const final = (await esperarRespuesta(deps.redis, waiter, messageId, espera)) ?? resp;
-    return { ok: true, messageId, estado: final.estado, texto: final.texto, handoff: final.handoff };
+    const encolar = async (req: FastifyRequest, entrantes: Entrante[]) => {
+      for (const e of entrantes) {
+        try {
+          await recibirMensaje(deps, e);
+        } catch (err) {
+          req.log.error({ err, canal: e.canal, endpointId: e.endpointId }, 'no se pudo encolar el mensaje');
+        }
+      }
+      return { ok: true };
+    };
+
+    webhooks.get('/webhooks/meta', async (req, reply) => {
+      const q = req.query as Record<string, string | undefined>;
+      const token = q['hub.verify_token'] ?? '';
+      const secreto = deps.config.META_VERIFY_TOKEN;
+      if (q['hub.mode'] !== 'subscribe' || !secreto || !safeEqual(token, secreto)) {
+        throw new HttpError(403, 'Token de verificación inválido');
+      }
+      return reply.type('text/plain').send(q['hub.challenge'] ?? '');
+    });
+
+    webhooks.post('/webhooks/meta', async (req) => {
+      if (!deps.config.META_APP_SECRET) throw new HttpError(503, 'Meta no está configurado');
+      if (!firmaMetaValida(crudo.get(req) ?? '', req.headers['x-hub-signature-256'], deps.config.META_APP_SECRET)) {
+        throw new HttpError(401, 'Firma de Meta inválida');
+      }
+      return encolar(req, leerMeta(req.body));
+    });
+
+    webhooks.post('/webhooks/tiktok', async (req) => {
+      if (!deps.config.TIKTOK_APP_SECRET) throw new HttpError(503, 'TikTok no está configurado');
+      const ahora = Math.floor(deps.now().getTime() / 1000);
+      if (!firmaTiktokValida(crudo.get(req) ?? '', req.headers['tiktok-signature'], deps.config.TIKTOK_APP_SECRET, ahora)) {
+        throw new HttpError(401, 'Firma de TikTok inválida');
+      }
+      return encolar(req, leerTiktok(req.body));
+    });
   });
 }

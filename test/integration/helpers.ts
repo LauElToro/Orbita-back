@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { inject, vi } from 'vitest';
@@ -14,7 +15,7 @@ export interface TestEnv {
   app: FastifyInstance;
   clock: { now: Date };
   ai: { chat: ReturnType<typeof vi.fn> };
-  manychat: { sendText: ReturnType<typeof vi.fn> };
+  mensajeria: { enviar: ReturnType<typeof vi.fn> };
   mp: PaymentsGateway & {
     crearSuscripcion: ReturnType<typeof vi.fn>;
     cancelarSuscripcion: ReturnType<typeof vi.fn>;
@@ -36,13 +37,15 @@ export async function createTestEnv(): Promise<TestEnv> {
     ENCRYPTION_KEY: 'b'.repeat(64),
     ADMIN_EMAIL: 'admin@test.local',
     ADMIN_PASSWORD: 'pw',
-    LONG_POLL_MS: '1500',
+    META_APP_SECRET: 'meta-secret',
+    META_VERIFY_TOKEN: 'verificar-orbita',
+    TIKTOK_APP_SECRET: 'tiktok-secret',
     PUBLIC_URL: 'https://orbita.test',
     TRANSFER_ALIAS: 'orbita.test.alias',
   });
   const clock = { now: new Date('2026-11-14T15:00:00Z') };
   const ai = { chat: vi.fn() };
-  const manychat = { sendText: vi.fn().mockResolvedValue(undefined) };
+  const mensajeria = { enviar: vi.fn().mockResolvedValue(undefined) };
   const mp = {
     habilitado: true,
     crearSuscripcion: vi.fn(),
@@ -53,7 +56,7 @@ export async function createTestEnv(): Promise<TestEnv> {
   const deps = createDeps(config, {
     prisma: new PrismaClient({ datasources: { db: { url: databaseUrl } } }),
     ai,
-    manychat,
+    mensajeria,
     mercadopago: mp,
     now: () => clock.now,
   });
@@ -66,7 +69,7 @@ export async function createTestEnv(): Promise<TestEnv> {
     app,
     clock,
     ai,
-    manychat,
+    mensajeria,
     mp,
     token: '',
     auth: () => ({ authorization: `Bearer ${env.token}` }),
@@ -79,7 +82,8 @@ export async function createTestEnv(): Promise<TestEnv> {
       await rebuildIndex(deps.prisma, deps.redis);
       clock.now = new Date('2026-11-14T15:00:00Z');
       ai.chat.mockReset();
-      manychat.sendText.mockClear();
+      mensajeria.enviar.mockReset();
+      mensajeria.enviar.mockResolvedValue(undefined);
       mp.crearSuscripcion.mockReset();
       mp.cancelarSuscripcion.mockClear();
       mp.obtenerPago.mockReset();
@@ -108,9 +112,7 @@ export const altaBase = {
   nombre: 'Pizzería Norte',
   planId: 'turnos',
   medio: 'transferencia',
-  canales: [{ tipo: 'whatsapp', endpointId: '54911XXXX', etiqueta: 'WhatsApp del local' }],
-  pageId: '123',
-  appToken: 'manychat-secret-token',
+  canales: [{ tipo: 'whatsapp', endpointId: 'PN-NORTE', etiqueta: 'WhatsApp del local', token: 'whatsapp-secret-token' }],
   prompt: 'Vendemos pizzas. Abrimos de 19 a 24.',
 };
 
@@ -135,6 +137,41 @@ export async function registrarCliente(env: TestEnv, overrides: Record<string, u
   if (res.statusCode !== 201) throw new Error(`registro falló: ${res.statusCode} ${res.body}`);
   const token: string = res.json().token;
   return { token, headers: { authorization: `Bearer ${token}` } };
+}
+
+/** POST firmado como lo manda Meta (X-Hub-Signature-256 sobre el cuerpo crudo). */
+export function webhookMeta(env: TestEnv, body: unknown, secret = 'meta-secret') {
+  const raw = JSON.stringify(body);
+  return env.app.inject({
+    method: 'POST',
+    url: '/webhooks/meta',
+    headers: {
+      'content-type': 'application/json',
+      'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`,
+    },
+    payload: raw,
+  });
+}
+
+export function mensajeWhatsapp(texto: string, extra: { from?: string; id?: string; phoneId?: string; nombre?: string } = {}) {
+  const from = extra.from ?? '5491100000999';
+  return {
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              metadata: { phone_number_id: extra.phoneId ?? 'PN-NORTE' },
+              contacts: [{ wa_id: from, profile: { name: extra.nombre ?? 'Ana' } }],
+              messages: [{ id: extra.id ?? `wamid.${texto}.${from}`, from, type: 'text', text: { body: texto } }],
+            },
+          },
+        ],
+      },
+    ],
+  };
 }
 
 export async function alta(env: TestEnv, overrides: Record<string, unknown> = {}) {

@@ -9,10 +9,10 @@ import { documentosPendientes, registrarAceptacion } from '../legal/legal';
 import { getTenant } from '../tenants/repo';
 import { actualizarTenant } from '../tenants/service';
 import { leerUso } from '../usage/usage';
+import { guardarWeb, rotarClaveWeb } from '../web/service';
 import { completarGoogle, prepararGoogle } from './google';
 import {
   activarPropio,
-  actualizarManychat,
   avanzarOnboarding,
   cambiarPassword,
   cambiarPlan,
@@ -37,7 +37,8 @@ const SOLO_CON_PAGO = new Set([
   '/cuenta/prompt',
   '/cuenta/textos',
   '/cuenta/canales',
-  '/cuenta/manychat',
+  '/cuenta/web',
+  '/cuenta/web/clave',
   '/cuenta/onboarding',
   '/cuenta/onboarding/completar',
   '/cuenta/pausar',
@@ -156,9 +157,15 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
       return responder(req, tenantId);
     });
 
-    cuenta.put('/cuenta/manychat', async (req) => {
+    cuenta.put('/cuenta/web', async (req) => {
       const { tenantId } = tenantDeSesion(req);
-      await actualizarManychat(deps, tenantId, req.body);
+      await guardarWeb(deps, tenantId, req.body);
+      return responder(req, tenantId);
+    });
+
+    cuenta.post('/cuenta/web/clave', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await rotarClaveWeb(deps, tenantId);
       return responder(req, tenantId);
     });
 
