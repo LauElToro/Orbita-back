@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { registrarPago } from '../../src/billing/service';
 import { alta, createTestEnv, registrarCliente, registroBase, type TestEnv } from './helpers';
 
 let env: TestEnv;
@@ -24,8 +25,7 @@ const perfil = {
 };
 
 async function pagar(id: string) {
-  const res = await llamar(env.auth(), 'POST', `/clientes/${id}/transferencia`);
-  expect(res.statusCode).toBe(200);
+  await registrarPago(env.deps, id, { medio: 'mercadopago' });
 }
 
 describe('registro y acceso', () => {
@@ -36,6 +36,7 @@ describe('registro y acceso', () => {
     expect((await reg({ aceptaPrivacidad: undefined })).statusCode).toBe(400);
     expect((await reg({ password: 'corta' })).statusCode).toBe(400);
     expect((await reg({ planId: 'personalizado' })).statusCode).toBe(400);
+    expect((await reg({ medio: 'transferencia' })).statusCode).toBe(400);
   });
 
   it('crea la ficha pausada en onboarding y deja constancia de la aceptación', async () => {
@@ -46,8 +47,8 @@ describe('registro y acceso', () => {
       legalPendiente: [],
       negocio: { id: 'peluqueria-luna', estado: 'pausado', pausaMotivo: 'onboarding', modulos: ['faq', 'handoff', 'turnos'] },
       plan: { id: 'turnos' },
-      suscripcion: { estadoPago: 'pendiente', importe: 80_000, medio: 'transferencia' },
-      transferencia: { concepto: 'peluqueria-luna' },
+      suscripcion: { estadoPago: 'pendiente', importe: 84_000, medio: 'mercadopago' },
+      transferencia: null,
       onboarding: { paso: 0, completado: null, requisitos: { pago: false, manychat: false, canal: false, prompt: false } },
     });
     expect(me.manychat.entrada).toBe('https://orbita.test/api/webhooks/manychat/entrada');
@@ -135,10 +136,10 @@ describe('onboarding', () => {
     const { headers } = await registrarCliente(env);
 
     expect((await llamar(headers, 'POST', '/cuenta/probar', { texto: 'hola' })).statusCode).toBe(402);
-    const sinNada = await llamar(headers, 'POST', '/cuenta/onboarding/completar');
-    expect(sinNada.statusCode).toBe(409);
-    expect(sinNada.json().error).toContain('el pago del plan acreditado');
-    expect((await llamar(headers, 'POST', '/cuenta/pausar')).statusCode).toBe(409);
+    expect((await llamar(headers, 'PUT', '/cuenta/perfil', perfil)).statusCode).toBe(402);
+    expect((await llamar(headers, 'POST', '/cuenta/onboarding/completar')).statusCode).toBe(402);
+    expect((await llamar(headers, 'POST', '/cuenta/pausar')).statusCode).toBe(402);
+    expect((await llamar(headers, 'GET', '/cuenta/me')).statusCode).toBe(200);
 
     await pagar('peluqueria-luna');
 
@@ -226,8 +227,7 @@ describe('plan y pago del cliente', () => {
     expect(completo.negocio.modulos).toContain('recordatorios');
     expect(env.mp.cancelarSuscripcion).toHaveBeenCalledWith('pre-1');
 
-    const transf = (await llamar(headers, 'PATCH', '/cuenta/plan', { medio: 'transferencia' })).json();
-    expect(transf.suscripcion).toMatchObject({ medio: 'transferencia', importe: 110_000 });
+    expect((await llamar(headers, 'PATCH', '/cuenta/plan', { medio: 'transferencia' })).statusCode).toBe(400);
     expect((await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'personalizado' })).statusCode).toBe(400);
 
     await env.deps.prisma.tenant.update({

@@ -28,6 +28,7 @@ enum CanalTipo {
   whatsapp
   instagram
   telegram
+  tiktok
 }
 
 enum MedioPago {

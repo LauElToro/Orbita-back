@@ -30,6 +30,18 @@ import {
 const evidencia = (req: FastifyRequest) => ({ ip: req.ip, userAgent: req.headers['user-agent'] });
 
 const SIN_GUARDA_LEGAL = new Set(['/cuenta/me', '/cuenta/legal/aceptar']);
+const SOLO_CON_PAGO = new Set([
+  '/cuenta/perfil',
+  '/cuenta/prompt',
+  '/cuenta/textos',
+  '/cuenta/canales',
+  '/cuenta/manychat',
+  '/cuenta/onboarding',
+  '/cuenta/onboarding/completar',
+  '/cuenta/pausar',
+  '/cuenta/activar',
+  '/cuenta/probar',
+]);
 
 export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
   const firmar = (s: { userId: string; tenantId: string }) =>
@@ -55,9 +67,18 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
   app.register(async (cuenta) => {
     cuenta.addHook('onRequest', cuenta.requireCliente);
     cuenta.addHook('preHandler', async (req) => {
-      if (SIN_GUARDA_LEGAL.has(req.routeOptions.url ?? '')) return;
-      const pendientes = await documentosPendientes(deps.prisma, tenantDeSesion(req).userId);
-      if (pendientes.length) throw new HttpError(428, 'Tenés que aceptar la versión vigente de los documentos legales');
+      const url = req.routeOptions.url ?? '';
+      if (!SIN_GUARDA_LEGAL.has(url)) {
+        const pendientes = await documentosPendientes(deps.prisma, tenantDeSesion(req).userId);
+        if (pendientes.length) throw new HttpError(428, 'Tenés que aceptar la versión vigente de los documentos legales');
+      }
+      if (SOLO_CON_PAGO.has(url)) {
+        const tenant = await getTenant(deps.prisma, tenantDeSesion(req).tenantId);
+        const pago = tenant.subscription?.estadoPago === 'al_dia';
+        if (!pago && !tenant.onboardingCompletado) {
+          throw new HttpError(402, 'Esta parte se habilita cuando se acredita el pago con Mercado Pago');
+        }
+      }
     });
 
     const responder = async (req: FastifyRequest, tenantId: string) =>

@@ -24,7 +24,7 @@ export const registroSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password,
   planId: z.enum(PLANES_AUTOGESTION),
-  medio: z.enum(['mercadopago', 'transferencia']),
+  medio: z.literal('mercadopago').default('mercadopago'),
   aceptaTerminos: aceptar('Tenés que aceptar los Términos y Condiciones'),
   aceptaPrivacidad: aceptar('Tenés que aceptar la Política de Privacidad'),
 });
@@ -214,7 +214,7 @@ export const manychatSchema = z.object({ pageId: z.string().trim().min(1), appTo
 
 export const planSchema = z.object({
   planId: z.enum(PLANES_AUTOGESTION).optional(),
-  medio: z.enum(['mercadopago', 'transferencia']).optional(),
+  medio: z.literal('mercadopago').optional(),
 });
 
 export async function actualizarManychat(deps: Deps, tenantId: string, raw: unknown) {

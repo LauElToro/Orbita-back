@@ -121,7 +121,7 @@ export const registroBase = {
   email: 'sofia@luna.com',
   password: 'clave-segura-1',
   planId: 'turnos',
-  medio: 'transferencia',
+  medio: 'mercadopago',
   aceptaTerminos: true,
   aceptaPrivacidad: true,
 };

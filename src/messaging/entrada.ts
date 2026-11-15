@@ -12,7 +12,7 @@ import { guardarRespuesta, leerRespuesta, type EstadoRespuesta } from './respues
 export const entradaSchema = z.object({
   pageId: z.coerce.string().min(1),
   subscriberId: z.coerce.string().min(1),
-  canal: z.enum(['whatsapp', 'instagram', 'telegram']).optional(),
+  canal: z.enum(['whatsapp', 'instagram', 'tiktok']).optional(),
   endpointId: z.coerce.string().min(1),
   texto: z.string().trim().min(1).max(4000),
   nombre: z.string().optional().default(''),

@@ -1,0 +1,1 @@
+ALTER TYPE "CanalTipo" ADD VALUE IF NOT EXISTS 'tiktok';

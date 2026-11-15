@@ -15,13 +15,13 @@ Hay dos accesos: el equipo (`/auth/login`, rol `admin`) y cada comercio (`/cuent
 - Armar la respuesta en el worker con el prompt de esa ficha y los módulos prendidos, llamando a OpenRouter.
 - Entregar el texto cuando ManyChat lo pide (salida, long-poll de hasta 8 segundos).
 - Contar cada respuesta del bot y frenar al llegar al tope del plan.
-- Cobrar el abono (Mercado Pago a 18 días, o transferencia) y pausar la ficha si no se pagó.
+- Cobrar el abono con Mercado Pago (acredita a los 18 días) y pausar la ficha si no se pagó.
 - Recibir tickets de IA personalizada y convertirlos en fichas.
 - Registrar comercios, guardar la aceptación de los documentos legales y guiar el onboarding hasta activar la IA.
 - Dar al equipo los KPIs del negocio (MRR, cobranza, uso, embudo, alertas).
 ## Qué queda afuera
 - Crear o editar flujos de ManyChat. La API no lo permite. El flujo plantilla se arma una vez en el constructor y el cliente lo instala en su cuenta.
-- Conectar Instagram, WhatsApp o Telegram. Eso lo hace el cliente en su ManyChat. WhatsApp pide el plan Pro de ManyChat y la billetera de Meta es de él.
+- Conectar Instagram, WhatsApp o TikTok. Eso lo hace el cliente en su ManyChat. WhatsApp pide el plan Pro de ManyChat y la billetera de Meta es de él.
 - Pagar ManyChat, los mensajes de Meta o Ingresos Brutos. El neto de cada plan es lo que entra después de la comisión de Mercado Pago. IIBB se confirma con el primer cobro real.
 - Un modelo distinto por cliente. El default es un modelo barato. Uno más capaz se habilita en la ficha solo si el plan lo paga (Completo y Personalizado).
 ## Límites de ManyChat que el código tiene que respetar
@@ -93,7 +93,7 @@ La clave es el extremo al que le escribieron, nunca el teléfono de la persona.
 |---|---|---|
 | WhatsApp | `phone_number_id` del número del negocio | el número del local |
 | Instagram | `page_id` de esa cuenta | la cuenta del local |
-| Telegram | id del bot | el bot del local |
+| TikTok | identificador de la cuenta | la cuenta del local |
 Esas claves viven en `Channel.endpointId` (único) y se indexan en el hash de Redis `idx:endpoints` (`endpointId -> clientId`). El índice se reconstruye al arrancar y cada vez que cambian los canales. Si llega un extremo que no está en ninguna ficha, se responde `200` con `estado: "ignorado"`.
 ## Entrada y salida
 ```mermaid

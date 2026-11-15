@@ -13,7 +13,7 @@ import { getTenant, rebuildIndex, tenantInclude, type TenantFull } from './repo'
 const PLAN_IDS = ['mensajes', 'turnos', 'completo', 'personalizado'] as const;
 
 export const canalSchema = z.object({
-  tipo: z.enum(['whatsapp', 'instagram', 'telegram']),
+  tipo: z.enum(['whatsapp', 'instagram', 'tiktok']),
   endpointId: z.string().trim().min(1),
   etiqueta: z.string().trim().min(1),
 });
