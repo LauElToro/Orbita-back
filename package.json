@@ -26,6 +26,7 @@
     "fastify": "^5.2.0",
     "ioredis": "^5.4.1",
     "nodemailer": "^10.5.0",
+    "pdf-parse": "^2.4.5",
     "prisma": "^6.1.0",
     "zod": "^3.24.1"
   },

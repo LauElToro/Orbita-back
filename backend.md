@@ -50,6 +50,7 @@ Backend/
     legal/              # versiones vigentes y aceptaciones
     messaging/          # webhooks de Meta y TikTok, firmas, encolado y envío por cada plataforma
     ai/                 # contexto, perfil guiado -> prompt, simulador, cliente OpenRouter
+    demo/               # demo gratis: fuentes (PDF, TSV/CSV, texto), funciones simuladas y chat
     worker/             # procesamiento de cada mensaje
     web/                # integración web: endpoint público, widget.js y contacto
     billing/            # planes, Mercado Pago, transferencia, pausa
@@ -84,7 +85,8 @@ El código de cada módulo existe una sola vez en `src/modules`. Prender turnos 
 | `precioPersonalizado` | abono acordado en el ticket (solo plan Personalizado) |
 | `publicToken` | token de la página `/p/:token` |
 | `webActiva`, `webClave`, `webOrigenes`, `webBienvenida`, `webColor` | integración web: si está prendida, su clave pública, los dominios permitidos y cómo se ve el chat |
-Relacionadas: `Channel` (extremo y token cifrado), `Subscription` (medio, estado del pago, día del abono, vencimiento), `Payment`, `Usage`, `Conversation` (canal, extremo, destino para responder, `handoffHasta` y últimas 10 intervenciones por contacto), `Turno`, `Ticket`, `ClientUser` (cuenta del comercio, una por ficha) y `LegalAcceptance`.
+| `demo` | configuración de la demo (`negocio`, `funciones`, `horarios`, `tono`) y cuántos mensajes se probaron |
+Relacionadas: `DemoFuente` (archivos y textos cargados en la demo), `Channel` (extremo y token cifrado), `Subscription` (medio, estado del pago, día del abono, vencimiento), `Payment`, `Usage`, `Conversation` (canal, extremo, destino para responder, `handoffHasta` y últimas 10 intervenciones por contacto), `Turno`, `Ticket`, `ClientUser` (cuenta del comercio, una por ficha) y `LegalAcceptance`.
 ## Planes
 | Plan | Transferencia | Mercado Pago | Topes día/semana/mes | Canales | Módulos |
 |---|---|---|---|---|---|
@@ -185,11 +187,25 @@ Los períodos se calculan en la zona horaria de la ficha: el día reinicia a med
 - `PUT /cuenta/perfil` recibe las respuestas del tutorial (descripción, productos, horarios, ubicación, pagos y envíos, tono, cuándo derivar, preguntas frecuentes y, si el plan tiene turnos, servicios, horarios, duración y anticipación) y las compila en el prompt por secciones. El prompt se puede editar a mano después.
 - `POST /cuenta/probar` es el simulador: usa el prompt y los módulos reales pero no reserva turnos, no suma uso ni guarda historial; devuelve el texto y las acciones que haría. Pide el pago al día y tiene un límite de 60 por hora.
 - El comercio puede pausar y reactivar su IA una vez terminado el tutorial. Reactivar pide el pago al día.
+## Demo
+Cualquier cuenta registrada, haya pagado o no, puede probar la IA con su propia información. No usa canales, no reserva nada, no suma uso ni toca el prompt real.
+- Fuentes (`DemoFuente`): PDF (texto extraído con `pdf-parse`, hasta 60 páginas), planillas TSV o CSV (detecta tabulación, `;` o `,` y comillas; hasta 400 filas, se guardan normalizadas a TSV) y texto pegado. Máximo 6 fuentes, 5 MB por archivo, 25.000 caracteres por fuente y 60.000 en total (si se pasa, se recorta a lo que queda). Formato no soportado: `400`; archivo grande: `413`; lleno: `409`.
+- Funciones (`Tenant.demo.funciones`): `stock`, `horarios`, `turnos`, `pedidos` y `derivar`. Cada una suma instrucciones al contexto y su etiqueta (`[STOCK_RESERVAR producto | cantidad]`, `[PEDIDO ...]`, `[TURNO_RESERVAR AAAA-MM-DD HH:mm]`, `[HANDOFF]`) se convierte en una acción descrita ("Separaría 2 × Remera") sin efectos.
+- El chat responde solo con lo cargado y con el modelo barato. Si la demo no tiene nombre de negocio propio, usa el prompt de la ficha como contexto extra.
+- `POST /cuenta/demo/ejemplo` carga una tienda de ropa de ejemplo (planilla de stock y políticas) para quien no tiene archivos a mano.
+- Cada mensaje suma a `Tenant.demo.mensajes`; las métricas cuentan como "probaron la demo" a los leads sin pago con al menos un mensaje.
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET, PUT | `/cuenta/demo` | Estado (fuentes, configuración, límites y uso) y cambio de configuración |
+| POST | `/cuenta/demo/fuentes` | `{ nombre, texto }` o `{ nombre, archivo }` (base64). Cuerpo de hasta 8 MB, 30 por hora |
+| DELETE | `/cuenta/demo/fuentes/:id` | Quita una fuente |
+| POST | `/cuenta/demo/ejemplo` | Reemplaza todo por los datos de ejemplo. 10 por hora |
+| POST | `/cuenta/demo/chat` | `{ texto, historial }` → `{ texto, handoff, acciones }`. 40 por hora y 150 por día; `502` si falla la IA |
 ## Métricas
 `GET /admin/metricas` (solo equipo) devuelve:
 - clientes: total, activos, pausados por motivo, en onboarding y por plan;
 - ingresos: MRR y ARPU de los que pagan, MRR en riesgo, cobrado en 30 días, por acreditar y total por mes (6 meses);
-- cobranza por estado de pago, respuestas por día (30 días), embudo de registro, tickets por estado, conversión y arrepentimientos abiertos;
+- cobranza por estado de pago, respuestas por día (30 días), embudo de registro (incluye cuántos leads probaron la demo), tickets por estado, conversión y arrepentimientos abiertos;
 - alertas: clientes con 80% o más del tope mensual y vencimientos de los próximos 7 días.
 ## Tickets
 - `POST /publico/contacto`: nombre, email, teléfono, empresa, rubro, necesidad y aceptación de privacidad. Tiene honeypot (`website`) y un límite de 5 envíos por hora por IP.
@@ -211,9 +227,10 @@ Todas con `Authorization: Bearer <jwt>` de `POST /auth/login` (credenciales `ADM
 Con el JWT de `POST /cuenta/login` o `/cuenta/registro`.
 | Método | Ruta |
 |---|---|
-| GET | `/cuenta/me`, `/cuenta/uso`, `/cuenta/turnos`, `/cuenta/pagos` |
-| POST | `/cuenta/legal/aceptar`, `/cuenta/password`, `/cuenta/suscripcion`, `/cuenta/onboarding`, `/cuenta/onboarding/completar`, `/cuenta/pausar`, `/cuenta/activar`, `/cuenta/probar`, `/cuenta/web/clave` |
-| PUT | `/cuenta/perfil`, `/cuenta/prompt`, `/cuenta/canales`, `/cuenta/web` |
+| GET | `/cuenta/me`, `/cuenta/uso`, `/cuenta/turnos`, `/cuenta/pagos`, `/cuenta/demo` |
+| POST | `/cuenta/legal/aceptar`, `/cuenta/password`, `/cuenta/suscripcion`, `/cuenta/onboarding`, `/cuenta/onboarding/completar`, `/cuenta/pausar`, `/cuenta/activar`, `/cuenta/probar`, `/cuenta/web/clave`, `/cuenta/demo/fuentes`, `/cuenta/demo/ejemplo`, `/cuenta/demo/chat` |
+| PUT | `/cuenta/perfil`, `/cuenta/prompt`, `/cuenta/canales`, `/cuenta/web`, `/cuenta/demo` |
+| DELETE | `/cuenta/demo/fuentes/:id` |
 | PATCH | `/cuenta/plan`, `/cuenta/textos` |
 Públicas: `POST /cuenta/registro`, `/cuenta/login`, `/cuenta/restablecer`, `GET /publico/planes`, `/publico/legal`, `/publico/:token`, `POST /publico/:token/suscripcion`, `/publico/contacto`, `/publico/arrepentimiento`, `GET /health` y las de la integración web (`/web/*`, con la clave pública).
 Webhooks (sin JWT, con firma): `GET, POST /webhooks/meta`, `POST /webhooks/tiktok`, `POST /webhooks/mercadopago`.

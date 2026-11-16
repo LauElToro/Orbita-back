@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Deps } from '../deps';
 import { precioDe } from '../billing/plans';
+import { leerDemo } from '../demo/service';
 import { addDays, fmt, localParts, periodos } from '../lib/dates';
 
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -110,6 +111,7 @@ export async function calcularMetricas(deps: Deps) {
       registros30d: registros.length,
       enOnboarding: enOnboarding.length,
       onboardingSinPago: enOnboarding.filter((t) => t.subscription?.estadoPago !== 'al_dia').length,
+      probaronDemo: enOnboarding.filter((t) => t.subscription?.estadoPago !== 'al_dia' && leerDemo(t.demo).mensajes > 0).length,
       activados30d: tenants.filter((t) => t.onboardingCompletado && t.onboardingCompletado >= hace30).length,
     },
     tickets: {

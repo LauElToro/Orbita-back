@@ -26,7 +26,7 @@ export const perfilSchema = z.object({
 
 export type Perfil = z.infer<typeof perfilSchema>;
 
-const TONOS: Record<Perfil['tono'], string> = {
+export const TONOS: Record<Perfil['tono'], string> = {
   cercano: 'Cercano y amable, tuteando, como alguien del local que conoce a sus clientes.',
   formal: 'Formal y profesional, tratando de usted, claro y preciso.',
   divertido: 'Divertido y con buena onda, con algún emoji ocasional, sin perder claridad.',

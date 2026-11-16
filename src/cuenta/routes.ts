@@ -5,6 +5,7 @@ import { simular } from '../ai/simulador';
 import { iniciarSuscripcionMp } from '../billing/service';
 import { HttpError } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
+import { registerDemoRoutes } from '../demo/routes';
 import { documentosPendientes, registrarAceptacion } from '../legal/legal';
 import { getTenant } from '../tenants/repo';
 import { actualizarTenant } from '../tenants/service';
@@ -108,6 +109,8 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
       );
 
     cuenta.get('/cuenta/me', async (req) => responder(req, tenantDeSesion(req).tenantId));
+
+    registerDemoRoutes(cuenta, deps);
 
     cuenta.post('/cuenta/legal/aceptar', async (req) => {
       const { userId, tenantId } = tenantDeSesion(req);
