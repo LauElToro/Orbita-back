@@ -20,6 +20,7 @@ import {
   canalesSchema,
   completarOnboarding,
   cuentaDto,
+  guardarDatosNegocio,
   guardarPerfil,
   login,
   pausarPropio,
@@ -69,7 +70,7 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post('/cuenta/google/callback', async (req) => {
     await rateLimit(deps.redis, 'google-vuelta', req.ip, 20, 3600);
-    return { token: firmar(await completarGoogle(deps, req.body, evidencia(req))) };
+    return { token: firmar(await completarGoogle(deps, req.body)) };
   });
 
   app.post('/cuenta/olvide', async (req) => {
@@ -116,6 +117,12 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
       const { userId, tenantId } = tenantDeSesion(req);
       const pendientes = await documentosPendientes(deps.prisma, userId);
       if (pendientes.length) await registrarAceptacion(deps.prisma, userId, pendientes, evidencia(req));
+      return responder(req, tenantId);
+    });
+
+    cuenta.patch('/cuenta/negocio', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await guardarDatosNegocio(deps, tenantId, req.body);
       return responder(req, tenantId);
     });
 

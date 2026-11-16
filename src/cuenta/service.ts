@@ -94,6 +94,68 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
   return { userId: usuario.id, tenantId: tenant.id };
 }
 
+/** Alta con Google: nombre y email vienen de la cuenta. El negocio y el plan se completan después. */
+export async function registrarConGoogle(deps: Deps, perfil: { email: string; nombre: string }) {
+  if (await deps.prisma.clientUser.findUnique({ where: { email: perfil.email } })) {
+    throw conflict('Ya existe una cuenta con ese email');
+  }
+  const nombre = perfil.nombre.trim().length >= 2 ? perfil.nombre.trim() : 'Titular';
+  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: 'mensajes' } });
+  const id = await idDisponible(deps, nombre);
+  const timezone = 'America/Argentina/Buenos_Aires';
+  const now = deps.now();
+
+  const tenant = await deps.prisma.tenant.create({
+    data: {
+      id,
+      nombre: 'Mi negocio',
+      rubro: null,
+      estado: 'pausado',
+      pausaMotivo: 'onboarding',
+      planId: plan.id,
+      planElegido: false,
+      timezone,
+      publicToken: randomToken(18),
+      mensajes: { ...MENSAJES_DEFAULT },
+      modulos: plan.modulos,
+      topeDia: plan.topeDia,
+      topeSemana: plan.topeSemana,
+      topeMes: plan.topeMes,
+      emailContacto: perfil.email,
+      subscription: {
+        create: { medio: 'mercadopago', estadoPago: 'pendiente', diaAbono: localParts(now, timezone).d, vencimiento: now },
+      },
+      usuario: {
+        create: { email: perfil.email, nombre, passwordHash: await hashPassword(randomToken(24)) },
+      },
+    },
+    include: { usuario: true },
+  });
+  const usuario = tenant.usuario!;
+  await enviarCorreo(
+    deps.correo,
+    avisoOrbita(
+      perfil.email,
+      'Tu cuenta de Orbita está lista',
+      `Hola ${nombre}, ya creamos tu cuenta de Orbita.`,
+      'Cuando quieras, cargá el nombre y el rubro de tu negocio y elegí un plan. La IA se habilita cuando se acredita el pago con Mercado Pago.',
+      { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
+    ),
+  );
+  return { userId: usuario.id, tenantId: tenant.id };
+}
+
+const datosNegocioSchema = z.object({
+  nombre: z.string().trim().min(2).max(120),
+  rubro: z.string().trim().min(2).max(80),
+});
+
+export async function guardarDatosNegocio(deps: Deps, tenantId: string, raw: unknown) {
+  const { nombre, rubro } = datosNegocioSchema.parse(raw);
+  await deps.prisma.tenant.update({ where: { id: tenantId }, data: { nombre, rubro } });
+  return getTenant(deps.prisma, tenantId);
+}
+
 export async function login(deps: Deps, raw: unknown) {
   const { email, password: pass } = loginSchema.parse(raw);
   const usuario = await deps.prisma.clientUser.findUnique({ where: { email } });
