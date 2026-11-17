@@ -11,6 +11,9 @@ import { slugify } from '../lib/slug';
 
 /** Porción del primer pago de un referido que le corresponde al afiliado. */
 export const COMISION_REFERIDO = 0.5;
+/** La comisión se paga entre 30 y 60 días después del primer pago del referido. */
+export const DIAS_COMISION_DESDE = 30;
+export const DIAS_COMISION_HASTA = 60;
 
 const email = z.string().trim().toLowerCase().email();
 const password = z.string().min(8, 'La contraseña necesita al menos 8 caracteres').max(200);
@@ -50,7 +53,7 @@ export async function registrarAfiliado(deps: Deps, raw: unknown) {
       input.email,
       'Bienvenido al programa de afiliados de Orbita',
       `Hola ${input.nombre}, ya tenés tu link de referidos.`,
-      `Por cada comercio que contrate un plan con tu link te llevás el ${COMISION_REFERIDO * 100}% de su primer pago.`,
+      `Por cada comercio que contrate un plan con tu link te llevás el ${COMISION_REFERIDO * 100}% de su primer pago. Te lo pagamos entre ${DIAS_COMISION_DESDE} y ${DIAS_COMISION_HASTA} días después de ese pago.`,
       { texto: 'Ver mi panel', url: `${deps.config.PUBLIC_URL}/afiliados/panel` },
     ),
   );
@@ -126,6 +129,7 @@ export async function panelAfiliado(deps: Deps, affiliateId: string) {
     codigo: afiliado.codigo,
     link: `${deps.config.PUBLIC_URL}/?ref=${afiliado.codigo}`,
     porcentaje: COMISION_REFERIDO * 100,
+    plazo: { desde: DIAS_COMISION_DESDE, hasta: DIAS_COMISION_HASTA },
     datosCobro: afiliado.datosCobro,
     totales: { pendiente: total('pendiente'), pagada: total('pagada') },
     referidos: afiliado.referidos.map((r) => ({
@@ -139,6 +143,8 @@ export async function panelAfiliado(deps: Deps, affiliateId: string) {
       id: c.id,
       importe: c.importe,
       estado: c.estado,
+      pagableDesde: c.pagableDesde,
+      pagarAntes: c.pagarAntes,
       pagadaEn: c.pagadaEn,
       createdAt: c.createdAt,
     })),
@@ -156,7 +162,12 @@ export async function atribuirReferido(deps: Deps, tenantId: string, emailClient
  * Genera la comisión del primer pago de un referido. El plan Personalizado no comisiona.
  * El índice único por tenant evita duplicados si dos pagos llegan a la vez.
  */
-export async function comisionarPrimerPago(deps: Deps, tenantId: string, payment: { id: string; importe: number }) {
+export async function comisionarPrimerPago(
+  deps: Deps,
+  tenantId: string,
+  payment: { id: string; importe: number },
+  fechaPago: Date,
+) {
   const referido = await deps.prisma.referral.findUnique({
     where: { tenantId },
     include: { tenant: { select: { planId: true } } },
@@ -171,12 +182,25 @@ export async function comisionarPrimerPago(deps: Deps, tenantId: string, payment
         tenantId,
         paymentId: payment.id,
         importe: Math.round(payment.importe * COMISION_REFERIDO),
+        pagableDesde: addDays(fechaPago, DIAS_COMISION_DESDE),
+        pagarAntes: addDays(fechaPago, DIAS_COMISION_HASTA),
       },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return null;
     throw err;
   }
+}
+
+/** Si Mercado Pago reintegra o desconoce el primer pago, la comisión pendiente de ese pago se anula. */
+export async function anularComisionDePago(deps: Deps, externalId: string) {
+  const payment = await deps.prisma.payment.findUnique({ where: { externalId }, select: { id: true } });
+  if (!payment) return 0;
+  const { count } = await deps.prisma.commission.updateMany({
+    where: { paymentId: payment.id, estado: 'pendiente' },
+    data: { estado: 'anulada' },
+  });
+  return count;
 }
 
 export async function listarAfiliados(deps: Deps) {
@@ -205,7 +229,7 @@ export async function listarComisiones(deps: Deps, raw: unknown) {
   const { estado } = z.object({ estado: z.enum(['pendiente', 'pagada', 'anulada']).optional() }).parse(raw ?? {});
   const comisiones = await deps.prisma.commission.findMany({
     where: estado ? { estado } : {},
-    orderBy: { createdAt: 'desc' },
+    orderBy: estado === 'pendiente' ? { pagableDesde: 'asc' } : { createdAt: 'desc' },
     include: {
       affiliate: { select: { nombre: true, email: true, datosCobro: true } },
       tenant: { select: { id: true, nombre: true } },
@@ -219,6 +243,11 @@ export async function cambiarEstadoComision(deps: Deps, id: string, estado: 'pag
   const comision = await deps.prisma.commission.findUnique({ where: { id } });
   if (!comision) throw notFound('Comisión');
   if (comision.estado !== 'pendiente') throw conflict(`La comisión ya está ${comision.estado}`);
+  if (estado === 'pagada' && deps.now() < comision.pagableDesde) {
+    throw conflict(
+      `Esta comisión se paga desde el ${comision.pagableDesde.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}, a los ${DIAS_COMISION_DESDE} días del primer pago`,
+    );
+  }
   return deps.prisma.commission.update({
     where: { id },
     data: { estado, pagadaEn: estado === 'pagada' ? deps.now() : null },

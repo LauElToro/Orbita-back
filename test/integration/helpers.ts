@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { inject, vi } from 'vitest';
 import { buildApp } from '../../src/app';
 import { ensurePlans } from '../../src/billing/plans';
-import type { PagoMp, PaymentsGateway } from '../../src/billing/mercadopago';
+import type { PagoMp, PaymentsGateway, SuscripcionMp } from '../../src/billing/mercadopago';
 import { loadConfig } from '../../src/config';
 import { closeDeps, createDeps, type Deps } from '../../src/deps';
 import type { JobGeneracion } from '../../src/messaging/entrada';
@@ -20,6 +20,7 @@ export interface TestEnv {
     crearSuscripcion: ReturnType<typeof vi.fn>;
     cancelarSuscripcion: ReturnType<typeof vi.fn>;
     obtenerPago: ReturnType<typeof vi.fn>;
+    obtenerSuscripcion: ReturnType<typeof vi.fn>;
   };
   token: string;
   reset(): Promise<void>;
@@ -51,6 +52,7 @@ export async function createTestEnv(): Promise<TestEnv> {
     crearSuscripcion: vi.fn(),
     cancelarSuscripcion: vi.fn().mockResolvedValue(undefined),
     obtenerPago: vi.fn<(tipo: string, id: string) => Promise<PagoMp | null>>(),
+    obtenerSuscripcion: vi.fn<(id: string) => Promise<SuscripcionMp>>(),
     verificarFirma: () => true,
   };
   const deps = createDeps(config, {
@@ -87,6 +89,7 @@ export async function createTestEnv(): Promise<TestEnv> {
       mp.crearSuscripcion.mockReset();
       mp.cancelarSuscripcion.mockClear();
       mp.obtenerPago.mockReset();
+      mp.obtenerSuscripcion.mockReset();
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',

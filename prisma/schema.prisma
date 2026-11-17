@@ -205,6 +205,7 @@ model Subscription {
   vencimiento     DateTime
   mpPreapprovalId String?    @unique
   mpInitPoint     String?
+  mpEstado        String?
   updatedAt       DateTime   @updatedAt
 }
 
@@ -257,6 +258,8 @@ model Commission {
   payment     Payment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   importe     Int
   estado      ComisionEstado @default(pendiente)
+  pagableDesde DateTime
+  pagarAntes  DateTime
   pagadaEn    DateTime?
   createdAt   DateTime       @default(now())
 

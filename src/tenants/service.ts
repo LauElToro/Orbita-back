@@ -206,7 +206,7 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
   const mpViejo = (cambiaMedio || cambiaImporte) && actual.subscription?.mpPreapprovalId;
   if (actual.subscription && (cambiaMedio || cambiaImporte)) {
     data.subscription = {
-      update: { ...(cambiaMedio ? { medio: input.medio } : {}), mpPreapprovalId: null, mpInitPoint: null },
+      update: { ...(cambiaMedio ? { medio: input.medio } : {}), mpPreapprovalId: null, mpInitPoint: null, mpEstado: null },
     };
   }
 

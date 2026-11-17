@@ -1,4 +1,5 @@
 import type { MedioPago } from '@prisma/client';
+import type { SuscripcionMp } from './mercadopago';
 import type { Deps } from '../deps';
 import { comisionarPrimerPago } from '../afiliados/service';
 import { addDays, addMonths } from '../lib/dates';
@@ -53,7 +54,7 @@ export async function registrarPago(deps: Deps, tenantId: string, pago: PagoInpu
           : {},
     }),
   ]);
-  await comisionarPrimerPago(deps, tenantId, payment);
+  await comisionarPrimerPago(deps, tenantId, payment, now);
   return payment;
 }
 
@@ -78,12 +79,28 @@ export async function iniciarSuscripcionMp(deps: Deps, tenant: TenantFull, email
   });
   await deps.prisma.subscription.update({
     where: { tenantId: tenant.id },
-    data: { mpPreapprovalId: id, mpInitPoint: initPoint },
+    data: { mpPreapprovalId: id, mpInitPoint: initPoint, mpEstado: 'pending' },
   });
   if (!tenant.emailContacto) {
     await deps.prisma.tenant.update({ where: { id: tenant.id }, data: { emailContacto: payerEmail } });
   }
   return { initPoint };
+}
+
+/**
+ * Aviso de Mercado Pago sobre el débito automático (authorized, paused o cancelled).
+ * Si el cliente lo cancela desde Mercado Pago se olvida el link, así puede volver a suscribirse.
+ */
+export async function actualizarEstadoSuscripcion(deps: Deps, suscripcion: SuscripcionMp) {
+  const sub = await deps.prisma.subscription.findUnique({ where: { mpPreapprovalId: suscripcion.id } });
+  if (!sub) return null;
+  return deps.prisma.subscription.update({
+    where: { tenantId: sub.tenantId },
+    data:
+      suscripcion.estado === 'cancelled'
+        ? { mpEstado: 'cancelled', mpPreapprovalId: null, mpInitPoint: null }
+        : { mpEstado: suscripcion.estado },
+  });
 }
 
 export async function marcarTransferencia(deps: Deps, tenantId: string) {

@@ -168,7 +168,11 @@ Los períodos se calculan en la zona horaria de la ficha: el día reinicia a med
 ## Cobros
 - Alta: la suscripción arranca `pendiente` con vencimiento en la fecha del alta. El día del abono es el día del alta.
 - Transferencia: el equipo marca el pago y el vencimiento se corre un mes.
-- Mercado Pago: la página del cliente crea la suscripción (`preapproval`) y el cliente la aprueba una vez. `POST /webhooks/mercadopago` valida la firma `x-signature`, consulta el pago y lo registra una sola vez. La acreditación se estima a 18 días.
+- Mercado Pago: la página del cliente, el panel o el checkout crean la suscripción (`preapproval` en estado `pending`, débito mensual en ARS) y el cliente la aprueba una vez en el `init_point`. `POST /webhooks/mercadopago` valida la firma `x-signature` y según el tipo:
+  - `payment` o `subscription_authorized_payment`: consulta el pago (la suscripción sale de `point_of_interaction.transaction_data.subscription_id`) y lo registra una sola vez. Si viene `refunded`, `charged_back` o `cancelled`, anula la comisión pendiente de ese pago.
+  - `subscription_preapproval`: guarda el estado en `Subscription.mpEstado` (`authorized` = débito activo). Si el cliente lo cancela desde Mercado Pago se borra el link para que pueda volver a suscribirse.
+- En Mercado Pago (Tus integraciones > Webhooks) hay que cargar `{PUBLIC_URL}/api/webhooks/mercadopago` con los eventos Pagos, Planes y suscripciones y Pagos de suscripciones, y copiar la clave secreta en `MP_WEBHOOK_SECRET`. `PUBLIC_URL` tiene que ser https. Para probar se usa el token del vendedor de prueba y otro usuario de prueba como pagador.
+- La acreditación se estima a 18 días.
 - Cada hora: vencido pasa a `pendiente`. Con 7 días de atraso pasa a `impago` y la ficha se pausa con motivo `impago`. Registrar el pago la reactiva.
 - Activar a mano solo se permite con el pago al día.
 - Cambiar de plan o de medio limpia la suscripción de Mercado Pago guardada y cancela la anterior (`PUT /preapproval/:id`), para no cobrar dos veces ni con el importe viejo.
@@ -182,7 +186,8 @@ Los períodos se calculan en la zona horaria de la ficha: el día reinicia a med
 - Cualquiera se registra en `POST /afiliados/registro` (nombre, email, contraseña, `aceptaTerminos: true`) y recibe un código (`nombre-xxxx`). JWT `{ sub, rol: 'afiliado' }` por 7 días; no entra a `/cuenta` ni al panel del equipo.
 - El link es `PUBLIC_URL/?ref=codigo`. El frontend guarda el código 30 días y lo manda como `ref` en `/checkout`, `/cuenta/registro` y `/cuenta/google/iniciar`. Se crea un `Referral` si el código existe y no es del mismo email; un código inválido no corta el alta.
 - `registrarPago` crea la `Commission` del primer pago del referido: 50% del importe (`COMISION_REFERIDO`), salvo plan Personalizado. El índice único por ficha evita duplicados.
-- El equipo paga a mano por transferencia (datos de cobro que carga el afiliado) y marca `pagada` o `anulada` (por ejemplo, ante un arrepentimiento).
+- Regla de pago: la comisión se paga entre 30 y 60 días después del primer pago del cliente (`pagableDesde` y `pagarAntes`). Marcarla `pagada` antes de `pagableDesde` responde `409`.
+- El equipo paga a mano por transferencia (datos de cobro que carga el afiliado) y marca `pagada` o `anulada` (por ejemplo, ante un arrepentimiento). Un reintegro o contracargo del primer pago la anula sola.
 | Método | Ruta | Qué hace |
 |---|---|---|
 | POST | `/afiliados/registro`, `/afiliados/login`, `/afiliados/olvide`, `/afiliados/restablecer` | Públicas |

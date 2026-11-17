@@ -330,7 +330,14 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
     canales: canalesDto(deps, tenant.canales),
     web: webDto(deps, tenant),
     suscripcion: sub
-      ? { medio: sub.medio, estadoPago: sub.estadoPago, vencimiento: sub.vencimiento, importe, mpInitPoint: sub.mpInitPoint }
+      ? {
+          medio: sub.medio,
+          estadoPago: sub.estadoPago,
+          vencimiento: sub.vencimiento,
+          importe,
+          mpInitPoint: sub.mpInitPoint,
+          debitoActivo: sub.mpEstado === 'authorized',
+        }
       : null,
     transferencia: sub?.medio === 'transferencia' ? { alias: deps.config.TRANSFER_ALIAS, importe, concepto: tenant.id } : null,
     onboarding: {

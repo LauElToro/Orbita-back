@@ -4,7 +4,9 @@ import type { Deps } from '../deps';
 import { HttpError, notFound } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
 import { tenantInclude } from '../tenants/repo';
-import { iniciarSuscripcionMp, registrarPago } from './service';
+import { anularComisionDePago } from '../afiliados/service';
+import { ESTADOS_REVERTIDOS } from './mercadopago';
+import { actualizarEstadoSuscripcion, iniciarSuscripcionMp, registrarPago } from './service';
 
 const notificacionSchema = z.object({
   type: z.string().optional(),
@@ -22,8 +24,17 @@ export function registerBillingRoutes(app: FastifyInstance, deps: Deps): void {
     if (!deps.mercadopago.verificarFirma(req.headers, dataId)) throw new HttpError(401, 'Firma inválida');
     if (!deps.mercadopago.habilitado) return { ok: true };
 
+    if (tipo === 'subscription_preapproval' || tipo === 'preapproval') {
+      await actualizarEstadoSuscripcion(deps, await deps.mercadopago.obtenerSuscripcion(dataId));
+      return { ok: true };
+    }
+
     const pago = await deps.mercadopago.obtenerPago(tipo, dataId);
-    if (!pago?.aprobado) return { ok: true };
+    if (!pago) return { ok: true };
+    if (!pago.aprobado) {
+      if (pago.estado && ESTADOS_REVERTIDOS.has(pago.estado)) await anularComisionDePago(deps, `mp:${pago.id}`);
+      return { ok: true };
+    }
 
     const sub = pago.preapprovalId
       ? await deps.prisma.subscription.findUnique({ where: { mpPreapprovalId: pago.preapprovalId } })

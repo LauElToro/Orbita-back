@@ -91,6 +91,35 @@ describe('checkout sin sesión', () => {
   });
 });
 
+describe('débito automático de Mercado Pago', () => {
+  it('sigue el estado del preapproval y si el cliente lo cancela permite suscribirse de nuevo', async () => {
+    env.mp.crearSuscripcion.mockResolvedValueOnce({ id: 'pre-1', initPoint: 'https://mp.test/1' });
+    await checkout();
+    const aviso = (estado: string) => {
+      env.mp.obtenerSuscripcion.mockResolvedValueOnce({ id: 'pre-1', estado, externalReference: 'ana' });
+      return env.app.inject({
+        method: 'POST',
+        url: '/webhooks/mercadopago',
+        payload: { type: 'subscription_preapproval', data: { id: 'pre-1' } },
+      });
+    };
+    expect((await aviso('authorized')).statusCode).toBe(200);
+    expect(await env.deps.prisma.subscription.findUniqueOrThrow({ where: { tenantId: 'ana' } })).toMatchObject({
+      mpEstado: 'authorized',
+      mpPreapprovalId: 'pre-1',
+    });
+
+    await aviso('cancelled');
+    expect(await env.deps.prisma.subscription.findUniqueOrThrow({ where: { tenantId: 'ana' } })).toMatchObject({
+      mpEstado: 'cancelled',
+      mpPreapprovalId: null,
+      mpInitPoint: null,
+    });
+    env.mp.crearSuscripcion.mockResolvedValueOnce({ id: 'pre-2', initPoint: 'https://mp.test/2' });
+    expect((await checkout()).json()).toEqual({ initPoint: 'https://mp.test/2' });
+  });
+});
+
 describe('afiliados', () => {
   it('registro, login y separación de roles', async () => {
     const { headers, codigo } = await afiliado();
@@ -137,6 +166,8 @@ describe('afiliados', () => {
     const comisiones = await env.deps.prisma.commission.findMany();
     expect(comisiones).toHaveLength(1);
     expect(comisiones[0]).toMatchObject({ importe: 42_000, estado: 'pendiente', tenantId: 'ana' });
+    expect(comisiones[0].pagableDesde.toISOString()).toBe('2026-12-14T15:00:00.000Z');
+    expect(comisiones[0].pagarAntes.toISOString()).toBe('2027-01-13T15:00:00.000Z');
 
     await registrarPago(env.deps, 'ana', { medio: 'mercadopago', externalId: 'mp:pay-2' });
     expect(await env.deps.prisma.commission.count()).toBe(1);
@@ -144,8 +175,12 @@ describe('afiliados', () => {
     const panel = (await env.app.inject({ method: 'GET', url: '/afiliados/me', headers })).json();
     expect(panel).toMatchObject({ totales: { pendiente: 42_000, pagada: 0 }, referidos: [{ pago: true }] });
 
-    const pagar = await env.app.inject({ method: 'POST', url: `/admin/comisiones/${comisiones[0].id}/pagada`, headers: env.auth() });
-    expect(pagar.json()).toMatchObject({ estado: 'pagada' });
+    const pagar = () => env.app.inject({ method: 'POST', url: `/admin/comisiones/${comisiones[0].id}/pagada`, headers: env.auth() });
+    const antes = await pagar();
+    expect(antes.statusCode).toBe(409);
+    expect(antes.json().error).toMatch(/se paga desde el 14\/12\/2026/);
+    env.clock.now = new Date('2026-12-14T15:00:00Z');
+    expect((await pagar()).json()).toMatchObject({ estado: 'pagada' });
     expect((await env.app.inject({ method: 'POST', url: `/admin/comisiones/${comisiones[0].id}/anular`, headers: env.auth() })).statusCode).toBe(409);
 
     const lista = (await env.app.inject({ method: 'GET', url: '/admin/afiliados', headers: env.auth() })).json();
@@ -164,6 +199,22 @@ describe('afiliados', () => {
     await registrarCliente(env, { email: 'otra@luna.com', ref: 'no-existe' });
     await registrarCliente(env, { email: 'juan@socio.com', ref: codigo });
     expect(await env.deps.prisma.referral.count()).toBe(1);
+  });
+
+  it('un reintegro o contracargo del primer pago anula la comisión pendiente', async () => {
+    const { codigo } = await afiliado();
+    env.mp.crearSuscripcion.mockResolvedValue({ id: 'pre-1', initPoint: 'https://mp.test/1' });
+    await checkout({ ref: codigo });
+    const pago = { id: 'pay-1', importe: 84_000, preapprovalId: 'pre-1', fecha: env.clock.now };
+    const webhook = () =>
+      env.app.inject({ method: 'POST', url: '/webhooks/mercadopago', payload: { type: 'payment', data: { id: 'pay-1' } } });
+    env.mp.obtenerPago.mockResolvedValueOnce({ ...pago, aprobado: true, estado: 'approved' });
+    await webhook();
+    expect((await env.deps.prisma.commission.findFirstOrThrow()).estado).toBe('pendiente');
+
+    env.mp.obtenerPago.mockResolvedValueOnce({ ...pago, aprobado: false, estado: 'refunded' });
+    await webhook();
+    expect((await env.deps.prisma.commission.findFirstOrThrow()).estado).toBe('anulada');
   });
 
   it('el admin anula una comisión pendiente', async () => {

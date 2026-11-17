@@ -12,17 +12,29 @@ export interface PreapprovalInput {
 export interface PagoMp {
   id: string;
   aprobado: boolean;
+  /** Estado crudo de Mercado Pago: approved, rejected, refunded, charged_back, cancelled... */
+  estado?: string;
   importe: number;
   externalReference?: string;
   preapprovalId?: string;
   fecha: Date;
 }
 
+/** Estados de un preapproval: pending (sin aprobar), authorized (debitando), paused o cancelled. */
+export interface SuscripcionMp {
+  id: string;
+  estado: string;
+  externalReference?: string;
+}
+
+export const ESTADOS_REVERTIDOS = new Set(['refunded', 'charged_back', 'cancelled']);
+
 export interface PaymentsGateway {
   readonly habilitado: boolean;
   crearSuscripcion(input: PreapprovalInput): Promise<{ id: string; initPoint: string }>;
   cancelarSuscripcion(id: string): Promise<void>;
   obtenerPago(tipo: string, id: string): Promise<PagoMp | null>;
+  obtenerSuscripcion(id: string): Promise<SuscripcionMp>;
   verificarFirma(headers: Record<string, string | string[] | undefined>, dataId: string): boolean;
 }
 
@@ -82,13 +94,15 @@ export class MercadoPagoClient implements PaymentsGateway {
         external_reference?: string;
         date_approved?: string;
         metadata?: { preapproval_id?: string };
+        point_of_interaction?: { transaction_data?: { subscription_id?: string } };
       }>(`/v1/payments/${id}`);
       return {
         id: String(p.id),
         aprobado: p.status === 'approved',
+        estado: p.status,
         importe: Math.round(p.transaction_amount),
         externalReference: p.external_reference,
-        preapprovalId: p.metadata?.preapproval_id,
+        preapprovalId: p.point_of_interaction?.transaction_data?.subscription_id ?? p.metadata?.preapproval_id,
         fecha: p.date_approved ? new Date(p.date_approved) : new Date(),
       };
     }
@@ -104,6 +118,7 @@ export class MercadoPagoClient implements PaymentsGateway {
       return {
         id: String(a.payment?.id ?? a.id),
         aprobado: a.payment?.status === 'approved',
+        estado: a.payment?.status,
         importe: Math.round(a.transaction_amount),
         externalReference: a.external_reference,
         preapprovalId: a.preapproval_id,
@@ -111,6 +126,11 @@ export class MercadoPagoClient implements PaymentsGateway {
       };
     }
     return null;
+  }
+
+  async obtenerSuscripcion(id: string): Promise<SuscripcionMp> {
+    const s = await this.request<{ id: string; status: string; external_reference?: string }>(`/preapproval/${id}`);
+    return { id: s.id, estado: s.status, externalReference: s.external_reference };
   }
 
   verificarFirma(headers: Record<string, string | string[] | undefined>, dataId: string): boolean {
