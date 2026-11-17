@@ -177,6 +177,18 @@ Los períodos se calculan en la zona horaria de la ficha: el día reinicia a med
 - Contraseñas con scrypt. JWT de cliente `{ sub, rol: 'cliente', tenantId }` por 7 días; el del equipo es `{ sub, rol: 'admin' }` por 12 horas. Cada lado rechaza el token del otro con `403`.
 - Restablecer: el equipo genera un link de un solo uso válido 24 h (`POST /clientes/:id/reset-password`). Se guarda solo el hash del token.
 - Fichas creadas por el equipo (alta o ticket): `POST /clientes/:id/acceso` crea el usuario y devuelve el mismo tipo de link para que elija contraseña.
+- `POST /checkout` (sin sesión): `email`, `planId` (`mensajes`, `turnos` o `completo`), `aceptaTerminos`, `aceptaPrivacidad` y `ref` opcional. Crea la cuenta con contraseña aleatoria (negocio "Mi negocio", `clientId` desde el email), manda por mail un link para definir la contraseña válido 7 días y devuelve `{ initPoint }` de Mercado Pago con vuelta a `/checkout/gracias`. Si el email ya existe y la cuenta nunca pagó, retoma el checkout con el plan nuevo; si ya pagó responde `409`. Límite de 10 por hora por IP.
+## Afiliados
+- Cualquiera se registra en `POST /afiliados/registro` (nombre, email, contraseña, `aceptaTerminos: true`) y recibe un código (`nombre-xxxx`). JWT `{ sub, rol: 'afiliado' }` por 7 días; no entra a `/cuenta` ni al panel del equipo.
+- El link es `PUBLIC_URL/?ref=codigo`. El frontend guarda el código 30 días y lo manda como `ref` en `/checkout`, `/cuenta/registro` y `/cuenta/google/iniciar`. Se crea un `Referral` si el código existe y no es del mismo email; un código inválido no corta el alta.
+- `registrarPago` crea la `Commission` del primer pago del referido: 50% del importe (`COMISION_REFERIDO`), salvo plan Personalizado. El índice único por ficha evita duplicados.
+- El equipo paga a mano por transferencia (datos de cobro que carga el afiliado) y marca `pagada` o `anulada` (por ejemplo, ante un arrepentimiento).
+| Método | Ruta | Qué hace |
+|---|---|---|
+| POST | `/afiliados/registro`, `/afiliados/login`, `/afiliados/olvide`, `/afiliados/restablecer` | Públicas |
+| GET, PATCH | `/afiliados/me` | Panel del afiliado: link, referidos, comisiones y `datosCobro` |
+| GET | `/admin/afiliados`, `/admin/comisiones?estado=` | Solo equipo |
+| POST | `/admin/comisiones/:id/pagada`, `/admin/comisiones/:id/anular` | Solo equipo, desde `pendiente` |
 ## Documentos legales
 - `LEGAL` en `src/legal/legal.ts` tiene la versión vigente de `terminos` y `privacidad` (hoy `2026-11-14`). Tiene que coincidir con `VERSION_LEGAL` del frontend.
 - Cada aceptación guarda usuario, documento, versión, IP, user agent y fecha. Es la prueba de la aceptación electrónica.
@@ -232,7 +244,7 @@ Con el JWT de `POST /cuenta/login` o `/cuenta/registro`.
 | PUT | `/cuenta/perfil`, `/cuenta/prompt`, `/cuenta/canales`, `/cuenta/web`, `/cuenta/demo` |
 | DELETE | `/cuenta/demo/fuentes/:id` |
 | PATCH | `/cuenta/plan`, `/cuenta/textos` |
-Públicas: `POST /cuenta/registro`, `/cuenta/login`, `/cuenta/restablecer`, `GET /publico/planes`, `/publico/legal`, `/publico/:token`, `POST /publico/:token/suscripcion`, `/publico/contacto`, `/publico/arrepentimiento`, `GET /health` y las de la integración web (`/web/*`, con la clave pública).
+Públicas: `POST /checkout`, `/cuenta/registro`, `/cuenta/login`, `/cuenta/restablecer`, `GET /publico/planes`, `/publico/legal`, `/publico/:token`, `POST /publico/:token/suscripcion`, `/publico/contacto`, `/publico/arrepentimiento`, `GET /health` y las de la integración web (`/web/*`, con la clave pública).
 Webhooks (sin JWT, con firma): `GET, POST /webhooks/meta`, `POST /webhooks/tiktok`, `POST /webhooks/mercadopago`.
 ## Correr
 ```bash

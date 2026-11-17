@@ -6,7 +6,10 @@ import { safeEqual } from '../lib/crypto';
 import { HttpError } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
 
-export type Sesion = { sub: string; rol: 'admin' } | { sub: string; rol: 'cliente'; tenantId: string };
+export type Sesion =
+  | { sub: string; rol: 'admin' }
+  | { sub: string; rol: 'cliente'; tenantId: string }
+  | { sub: string; rol: 'afiliado' };
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
@@ -19,6 +22,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireCliente: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    requireAfiliado: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
@@ -44,6 +48,7 @@ export async function registerAuth(app: FastifyInstance, deps: Deps): Promise<vo
   };
   app.decorate('requireAdmin', requireRol('admin'));
   app.decorate('requireCliente', requireRol('cliente'));
+  app.decorate('requireAfiliado', requireRol('afiliado'));
 
   app.post('/auth/login', async (req, reply) => {
     await rateLimit(deps.redis, 'login', req.ip, 10, 900);

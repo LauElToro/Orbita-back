@@ -2,13 +2,15 @@ import { randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import type { Deps } from '../deps';
+import { atribuirReferido } from '../afiliados/service';
 import { compilarPrompt, perfilSchema } from '../ai/perfil';
+import { iniciarSuscripcionMp } from '../billing/service';
 import { randomToken, sha256 } from '../lib/crypto';
 import { addDays, localParts } from '../lib/dates';
 import { conflict, HttpError, notFound } from '../lib/errors';
 import { hashPassword, verifyPassword } from '../lib/password';
 import { slugify } from '../lib/slug';
-import { registrarAceptacion, type Evidencia, type DocumentoLegal } from '../legal/legal';
+import { documentosPendientes, registrarAceptacion, type Evidencia, type DocumentoLegal } from '../legal/legal';
 import { MENSAJES_DEFAULT, leerMensajes } from '../tenants/defaults';
 import { getTenant, type TenantFull } from '../tenants/repo';
 import { avisoOrbita, enviarCorreo } from '../correo/correo';
@@ -18,6 +20,7 @@ import { webDto } from '../web/service';
 const PLANES_AUTOGESTION = ['mensajes', 'turnos', 'completo'] as const;
 const password = z.string().min(8, 'La contraseña necesita al menos 8 caracteres').max(200);
 const aceptar = (msg: string) => z.literal(true, { errorMap: () => ({ message: msg }) });
+const refSchema = z.string().trim().max(40).optional();
 
 export const registroSchema = z.object({
   negocio: z.string().trim().min(2).max(120),
@@ -29,6 +32,7 @@ export const registroSchema = z.object({
   medio: z.literal('mercadopago').default('mercadopago'),
   aceptaTerminos: aceptar('Tenés que aceptar los Términos y Condiciones'),
   aceptaPrivacidad: aceptar('Tenés que aceptar la Política de Privacidad'),
+  ref: refSchema,
 });
 
 export const loginSchema = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1) });
@@ -39,29 +43,39 @@ async function idDisponible(deps: Deps, negocio: string): Promise<string> {
   return libre ? base : `${base}-${randomBytes(2).toString('hex')}`;
 }
 
+interface NuevaCuenta {
+  slug: string;
+  negocio: string;
+  rubro: string | null;
+  nombre: string;
+  email: string;
+  password: string;
+  planId?: (typeof PLANES_AUTOGESTION)[number];
+  ref?: string;
+}
+
 /**
- * Alta autogestionada: la ficha nace pausada (motivo onboarding) hasta que pague y termine el tutorial.
+ * La ficha nace pausada (motivo onboarding) hasta que pague y termine el tutorial.
  * Sin plan, la ficha guarda el más chico solo para cumplir la relación y `planElegido` queda en false hasta que elija.
  */
-export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) {
-  const input = registroSchema.parse(raw);
-  if (await deps.prisma.clientUser.findUnique({ where: { email: input.email } })) {
+async function crearCuenta(deps: Deps, datos: NuevaCuenta) {
+  if (await deps.prisma.clientUser.findUnique({ where: { email: datos.email } })) {
     throw conflict('Ya existe una cuenta con ese email');
   }
-  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: input.planId ?? 'mensajes' } });
-  const id = await idDisponible(deps, input.negocio);
+  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: datos.planId ?? 'mensajes' } });
+  const id = await idDisponible(deps, datos.slug);
   const timezone = 'America/Argentina/Buenos_Aires';
   const now = deps.now();
 
   const tenant = await deps.prisma.tenant.create({
     data: {
       id,
-      nombre: input.negocio,
-      rubro: input.rubro,
+      nombre: datos.negocio,
+      rubro: datos.rubro,
       estado: 'pausado',
       pausaMotivo: 'onboarding',
       planId: plan.id,
-      planElegido: Boolean(input.planId),
+      planElegido: Boolean(datos.planId),
       timezone,
       publicToken: randomToken(18),
       mensajes: { ...MENSAJES_DEFAULT },
@@ -69,17 +83,32 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
       topeDia: plan.topeDia,
       topeSemana: plan.topeSemana,
       topeMes: plan.topeMes,
-      emailContacto: input.email,
+      emailContacto: datos.email,
       subscription: {
-        create: { medio: input.medio, estadoPago: 'pendiente', diaAbono: localParts(now, timezone).d, vencimiento: now },
+        create: { medio: 'mercadopago', estadoPago: 'pendiente', diaAbono: localParts(now, timezone).d, vencimiento: now },
       },
       usuario: {
-        create: { email: input.email, nombre: input.nombre, passwordHash: await hashPassword(input.password) },
+        create: { email: datos.email, nombre: datos.nombre, passwordHash: await hashPassword(datos.password) },
       },
     },
     include: { usuario: true },
   });
-  const usuario = tenant.usuario!;
+  if (datos.ref) await atribuirReferido(deps, tenant.id, datos.email, datos.ref);
+  return { tenantId: tenant.id, usuario: tenant.usuario! };
+}
+
+export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) {
+  const input = registroSchema.parse(raw);
+  const { usuario } = await crearCuenta(deps, {
+    slug: input.negocio,
+    negocio: input.negocio,
+    rubro: input.rubro,
+    nombre: input.nombre,
+    email: input.email,
+    password: input.password,
+    planId: input.planId,
+    ref: input.ref,
+  });
   await registrarAceptacion(deps.prisma, usuario.id, ['terminos', 'privacidad'], evidencia);
   await enviarCorreo(
     deps.correo,
@@ -91,47 +120,21 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
       { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
     ),
   );
-  return { userId: usuario.id, tenantId: tenant.id };
+  return { userId: usuario.id, tenantId: usuario.tenantId };
 }
 
 /** Alta con Google: nombre y email vienen de la cuenta. El negocio y el plan se completan después. */
-export async function registrarConGoogle(deps: Deps, perfil: { email: string; nombre: string }) {
-  if (await deps.prisma.clientUser.findUnique({ where: { email: perfil.email } })) {
-    throw conflict('Ya existe una cuenta con ese email');
-  }
+export async function registrarConGoogle(deps: Deps, perfil: { email: string; nombre: string }, ref?: string) {
   const nombre = perfil.nombre.trim().length >= 2 ? perfil.nombre.trim() : 'Titular';
-  const plan = await deps.prisma.plan.findUniqueOrThrow({ where: { id: 'mensajes' } });
-  const id = await idDisponible(deps, nombre);
-  const timezone = 'America/Argentina/Buenos_Aires';
-  const now = deps.now();
-
-  const tenant = await deps.prisma.tenant.create({
-    data: {
-      id,
-      nombre: 'Mi negocio',
-      rubro: null,
-      estado: 'pausado',
-      pausaMotivo: 'onboarding',
-      planId: plan.id,
-      planElegido: false,
-      timezone,
-      publicToken: randomToken(18),
-      mensajes: { ...MENSAJES_DEFAULT },
-      modulos: plan.modulos,
-      topeDia: plan.topeDia,
-      topeSemana: plan.topeSemana,
-      topeMes: plan.topeMes,
-      emailContacto: perfil.email,
-      subscription: {
-        create: { medio: 'mercadopago', estadoPago: 'pendiente', diaAbono: localParts(now, timezone).d, vencimiento: now },
-      },
-      usuario: {
-        create: { email: perfil.email, nombre, passwordHash: await hashPassword(randomToken(24)) },
-      },
-    },
-    include: { usuario: true },
+  const { usuario } = await crearCuenta(deps, {
+    slug: nombre,
+    negocio: 'Mi negocio',
+    rubro: null,
+    nombre,
+    email: perfil.email,
+    password: randomToken(24),
+    ref,
   });
-  const usuario = tenant.usuario!;
   await enviarCorreo(
     deps.correo,
     avisoOrbita(
@@ -142,7 +145,66 @@ export async function registrarConGoogle(deps: Deps, perfil: { email: string; no
       { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
     ),
   );
-  return { userId: usuario.id, tenantId: tenant.id };
+  return { userId: usuario.id, tenantId: usuario.tenantId };
+}
+
+export const checkoutSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  planId: z.enum(PLANES_AUTOGESTION),
+  aceptaTerminos: aceptar('Tenés que aceptar los Términos y Condiciones'),
+  aceptaPrivacidad: aceptar('Tenés que aceptar la Política de Privacidad'),
+  ref: refSchema,
+});
+
+const DIAS_LINK_CHECKOUT = 7;
+
+/**
+ * Checkout sin sesión: con el email alcanza para crear la cuenta e ir a Mercado Pago.
+ * La contraseña se define después con el link que llega por mail.
+ * Si la cuenta ya existe pero nunca pagó, se retoma el checkout (con el plan elegido ahora).
+ */
+export async function checkoutPublico(deps: Deps, raw: unknown, evidencia: Evidencia) {
+  const input = checkoutSchema.parse(raw);
+  const existente = await deps.prisma.clientUser.findUnique({ where: { email: input.email } });
+  let tenantId: string;
+  if (existente) {
+    const tenant = await getTenant(deps.prisma, existente.tenantId);
+    const pagos = await deps.prisma.payment.count({ where: { tenantId: tenant.id } });
+    if (pagos > 0 || tenant.planId === 'personalizado' || tenant.subscription?.estadoPago !== 'pendiente') {
+      throw conflict('Ya tenés una cuenta con ese email. Ingresá para gestionar tu plan.');
+    }
+    tenantId = tenant.id;
+    if (tenant.planId !== input.planId || !tenant.planElegido) await cambiarPlan(deps, tenantId, { planId: input.planId });
+    const pendientes = await documentosPendientes(deps.prisma, existente.id);
+    if (pendientes.length) await registrarAceptacion(deps.prisma, existente.id, pendientes, evidencia);
+  } else {
+    const { usuario } = await crearCuenta(deps, {
+      slug: input.email.split('@')[0],
+      negocio: 'Mi negocio',
+      rubro: null,
+      nombre: 'Titular',
+      email: input.email,
+      password: randomToken(24),
+      planId: input.planId,
+      ref: input.ref,
+    });
+    tenantId = usuario.tenantId;
+    await registrarAceptacion(deps.prisma, usuario.id, ['terminos', 'privacidad'], evidencia);
+  }
+
+  const { link } = await generarReset(deps, tenantId, DIAS_LINK_CHECKOUT);
+  await enviarCorreo(
+    deps.correo,
+    avisoOrbita(
+      input.email,
+      'Definí tu contraseña de Orbita',
+      'Ya creamos tu cuenta de Orbita. Elegí una contraseña para entrar al panel.',
+      `El link vence en ${DIAS_LINK_CHECKOUT} días. La IA se habilita cuando se acredita el pago con Mercado Pago.`,
+      { texto: 'Definir mi contraseña', url: link },
+    ),
+  );
+  const tenant = await getTenant(deps.prisma, tenantId);
+  return iniciarSuscripcionMp(deps, tenant, input.email, `${deps.config.PUBLIC_URL}/checkout/gracias`);
 }
 
 const datosNegocioSchema = z.object({
@@ -174,11 +236,11 @@ export async function cambiarPassword(deps: Deps, userId: string, raw: unknown) 
 }
 
 /** El equipo genera un link de un solo uso (24 h) y se lo pasa al cliente por el canal que use. */
-export async function generarReset(deps: Deps, tenantId: string): Promise<{ link: string; expira: Date }> {
+export async function generarReset(deps: Deps, tenantId: string, dias = 1): Promise<{ link: string; expira: Date }> {
   const usuario = await deps.prisma.clientUser.findUnique({ where: { tenantId } });
   if (!usuario) throw notFound('Cuenta del cliente');
   const token = randomToken(32);
-  const expira = addDays(deps.now(), 1);
+  const expira = addDays(deps.now(), dias);
   await deps.prisma.clientUser.update({
     where: { id: usuario.id },
     data: { resetTokenHash: sha256(token), resetExpira: expira },

@@ -56,6 +56,12 @@ enum TurnoEstado {
   cancelado
 }
 
+enum ComisionEstado {
+  pendiente
+  pagada
+  anulada
+}
+
 model Plan {
   id                  String   @id
   nombre              String
@@ -110,6 +116,8 @@ model Tenant {
   ticket              Ticket?
   usuario             ClientUser?
   demoFuentes         DemoFuente[]
+  referido            Referral?
+  comision            Commission?
 }
 
 model DemoFuente {
@@ -210,6 +218,49 @@ model Payment {
   externalId  String?   @unique
   acreditaEn  DateTime?
   createdAt   DateTime  @default(now())
+  comision    Commission?
+}
+
+model Affiliate {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  nombre         String
+  passwordHash   String
+  codigo         String       @unique
+  datosCobro     String?
+  resetTokenHash String?      @unique
+  resetExpira    DateTime?
+  aceptaTerminos DateTime
+  createdAt      DateTime     @default(now())
+  referidos      Referral[]
+  comisiones     Commission[]
+}
+
+model Referral {
+  id          String    @id @default(cuid())
+  affiliateId String
+  affiliate   Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  tenantId    String    @unique
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@index([affiliateId])
+}
+
+model Commission {
+  id          String         @id @default(cuid())
+  affiliateId String
+  affiliate   Affiliate      @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  tenantId    String         @unique
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  paymentId   String         @unique
+  payment     Payment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  importe     Int
+  estado      ComisionEstado @default(pendiente)
+  pagadaEn    DateTime?
+  createdAt   DateTime       @default(now())
+
+  @@index([affiliateId, estado])
 }
 
 model Ticket {

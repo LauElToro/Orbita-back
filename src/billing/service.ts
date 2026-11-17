@@ -1,5 +1,6 @@
 import type { MedioPago } from '@prisma/client';
 import type { Deps } from '../deps';
+import { comisionarPrimerPago } from '../afiliados/service';
 import { addDays, addMonths } from '../lib/dates';
 import { conflict, HttpError, notFound } from '../lib/errors';
 import { getTenant, type TenantFull } from '../tenants/repo';
@@ -52,6 +53,7 @@ export async function registrarPago(deps: Deps, tenantId: string, pago: PagoInpu
           : {},
     }),
   ]);
+  await comisionarPrimerPago(deps, tenantId, payment);
   return payment;
 }
 

@@ -75,7 +75,7 @@ export async function createTestEnv(): Promise<TestEnv> {
     auth: () => ({ authorization: `Bearer ${env.token}` }),
     async reset() {
       await deps.prisma.$executeRawUnsafe(
-        'TRUNCATE "LegalAcceptance", "ClientUser", "Ticket", "Turno", "Payment", "Subscription", "Conversation", "Usage", "Channel", "Tenant" CASCADE',
+        'TRUNCATE "Commission", "Referral", "Affiliate", "LegalAcceptance", "ClientUser", "Ticket", "Turno", "Payment", "Subscription", "Conversation", "Usage", "Channel", "Tenant" CASCADE',
       );
       await deps.colaGeneracion.obliterate({ force: true });
       await deps.redis.flushdb();

@@ -18,6 +18,7 @@ import {
   cambiarPassword,
   cambiarPlan,
   canalesSchema,
+  checkoutPublico,
   completarOnboarding,
   cuentaDto,
   guardarDatosNegocio,
@@ -56,6 +57,11 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
     await rateLimit(deps.redis, 'registro', req.ip, 5, 3600);
     const sesion = await registrar(deps, req.body, evidencia(req));
     return reply.code(201).send({ token: firmar(sesion) });
+  });
+
+  app.post('/checkout', async (req) => {
+    await rateLimit(deps.redis, 'checkout', req.ip, 10, 3600);
+    return checkoutPublico(deps, req.body, evidencia(req));
   });
 
   app.post('/cuenta/login', async (req) => {

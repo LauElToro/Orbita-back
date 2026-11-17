@@ -12,6 +12,7 @@ import { registerPublicRoutes } from './tenants/public';
 import { registerCuentaRoutes } from './cuenta/routes';
 import { registerMetricasRoutes } from './admin/metricas';
 import { registerWebRoutes } from './web/routes';
+import { registerAfiliadoRoutes } from './afiliados/routes';
 
 export interface AppOptions {
   logger?: boolean;
@@ -54,6 +55,7 @@ export async function buildApp(deps: Deps, opts: AppOptions = {}): Promise<Fasti
   registerCuentaRoutes(app, deps);
   registerMetricasRoutes(app, deps);
   registerWebRoutes(app, deps);
+  registerAfiliadoRoutes(app, deps);
 
   return app;
 }

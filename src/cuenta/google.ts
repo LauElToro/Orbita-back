@@ -54,7 +54,7 @@ async function perfilDeCodigo(config: Config, code: string): Promise<PerfilGoogl
   return { email: info.email.toLowerCase(), email_verified: info.email_verified === true, nombre: info.name?.trim() || '' };
 }
 
-type PedidoGoogle = { modo: 'login' } | { modo: 'registro' };
+type PedidoGoogle = { modo: 'login' } | { modo: 'registro'; ref?: string };
 
 export async function prepararGoogle(deps: Deps, raw: unknown): Promise<{ url: string }> {
   if (!deps.config.GOOGLE_CLIENT_ID || !deps.config.GOOGLE_CLIENT_SECRET) {
@@ -71,7 +71,7 @@ export async function completarGoogle(deps: Deps, raw: unknown) {
   const guardado = await deps.redis.get(keys.googleState(state));
   if (!guardado) throw new HttpError(400, 'El ingreso con Google venció. Probá de nuevo.');
   await deps.redis.del(keys.googleState(state));
-  parsePedido(JSON.parse(guardado));
+  const pedido = parsePedido(JSON.parse(guardado));
   const perfil = await perfilDeCodigo(deps.config, code);
   if (!perfil.email_verified) throw new HttpError(400, 'Google no confirmó ese email');
 
@@ -80,14 +80,17 @@ export async function completarGoogle(deps: Deps, raw: unknown) {
     await deps.prisma.clientUser.update({ where: { id: existente.id }, data: { ultimoLogin: deps.now() } });
     return { userId: existente.id, tenantId: existente.tenantId };
   }
-  return registrarConGoogle(deps, perfil);
+  return registrarConGoogle(deps, perfil, pedido.modo === 'registro' ? pedido.ref : undefined);
 }
 
 function parsePedido(raw: unknown): PedidoGoogle {
   if (!raw || typeof raw !== 'object') throw new HttpError(400, 'Pedido inválido');
   const body = raw as Record<string, unknown>;
   if (body.modo === 'login') return { modo: 'login' };
-  if (body.modo === 'registro') return { modo: 'registro' };
+  if (body.modo === 'registro') {
+    const ref = typeof body.ref === 'string' && body.ref.trim() ? body.ref.trim().slice(0, 40) : undefined;
+    return ref ? { modo: 'registro', ref } : { modo: 'registro' };
+  }
   throw new HttpError(400, 'Pedido inválido');
 }
 
