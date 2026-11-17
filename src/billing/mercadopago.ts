@@ -35,6 +35,7 @@ export interface PaymentsGateway {
   cancelarSuscripcion(id: string): Promise<void>;
   obtenerPago(tipo: string, id: string): Promise<PagoMp | null>;
   obtenerSuscripcion(id: string): Promise<SuscripcionMp>;
+  listarPagosSuscripcion(preapprovalId: string): Promise<PagoMp[]>;
   verificarFirma(headers: Record<string, string | string[] | undefined>, dataId: string): boolean;
 }
 
@@ -107,23 +108,7 @@ export class MercadoPagoClient implements PaymentsGateway {
       };
     }
     if (tipo === 'subscription_authorized_payment') {
-      const a = await this.request<{
-        id: number;
-        preapproval_id: string;
-        transaction_amount: number;
-        external_reference?: string;
-        payment?: { id: number; status: string };
-        last_modified?: string;
-      }>(`/authorized_payments/${id}`);
-      return {
-        id: String(a.payment?.id ?? a.id),
-        aprobado: a.payment?.status === 'approved',
-        estado: a.payment?.status,
-        importe: Math.round(a.transaction_amount),
-        externalReference: a.external_reference,
-        preapprovalId: a.preapproval_id,
-        fecha: a.last_modified ? new Date(a.last_modified) : new Date(),
-      };
+      return pagoAutorizado(await this.request<PagoAutorizadoMp>(`/authorized_payments/${id}`));
     }
     return null;
   }
@@ -133,10 +118,44 @@ export class MercadoPagoClient implements PaymentsGateway {
     return { id: s.id, estado: s.status, externalReference: s.external_reference };
   }
 
+  /** Mercado Pago no acepta más de 12 resultados por página. */
+  async listarPagosSuscripcion(preapprovalId: string): Promise<PagoMp[]> {
+    const pagos: PagoMp[] = [];
+    for (let offset = 0; offset < 600; offset += 12) {
+      const res = await this.request<{ results: PagoAutorizadoMp[]; paging: { total: number } }>(
+        `/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}&offset=${offset}`,
+      );
+      pagos.push(...res.results.map(pagoAutorizado));
+      if (!res.results.length || offset + 12 >= res.paging.total) break;
+    }
+    return pagos;
+  }
+
   verificarFirma(headers: Record<string, string | string[] | undefined>, dataId: string): boolean {
     if (!this.webhookSecret) return true;
     return verificarFirmaMp(this.webhookSecret, headers, dataId);
   }
+}
+
+interface PagoAutorizadoMp {
+  id: number;
+  preapproval_id: string;
+  transaction_amount: number;
+  external_reference?: string;
+  payment?: { id: number; status: string };
+  last_modified?: string;
+}
+
+function pagoAutorizado(a: PagoAutorizadoMp): PagoMp {
+  return {
+    id: String(a.payment?.id ?? a.id),
+    aprobado: a.payment?.status === 'approved',
+    estado: a.payment?.status,
+    importe: Math.round(a.transaction_amount),
+    externalReference: a.external_reference,
+    preapprovalId: a.preapproval_id,
+    fecha: a.last_modified ? new Date(a.last_modified) : new Date(),
+  };
 }
 
 /** Si cambia el importe o el medio, la suscripción vieja se cancela para que no siga debitando. */

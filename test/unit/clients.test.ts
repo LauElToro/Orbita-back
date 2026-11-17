@@ -107,6 +107,18 @@ describe('MercadoPagoClient', () => {
     await expect(mp.obtenerPago('otro', '1')).resolves.toBeNull();
   });
 
+  it('lista todos los cobros de una suscripción de a 12', async () => {
+    const cobro = (id: number) => ({ id, preapproval_id: 'pre-1', transaction_amount: 42000, payment: { id: id + 100, status: 'approved' } });
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: Array.from({ length: 12 }, (_, i) => cobro(i)), paging: { total: 13 } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [cobro(12)], paging: { total: 13 } })));
+    vi.stubGlobal('fetch', fetch);
+    const pagos = await mp.listarPagosSuscripcion('pre-1');
+    expect(pagos).toHaveLength(13);
+    expect(pagos[12]).toMatchObject({ id: '112', aprobado: true, preapprovalId: 'pre-1' });
+    expect(String(fetch.mock.calls[1][0])).toContain('/authorized_payments/search?preapproval_id=pre-1&offset=12');
+  });
+
   it('sin secreto acepta la firma; sin token no está habilitado', () => {
     expect(mp.verificarFirma({}, '1')).toBe(true);
     expect(mp.habilitado).toBe(true);

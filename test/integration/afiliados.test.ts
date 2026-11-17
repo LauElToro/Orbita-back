@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { registrarPago } from '../../src/billing/service';
+import { conciliarMercadoPago, registrarPago, revisarVencimientos } from '../../src/billing/service';
 import type { MensajeCorreo } from '../../src/correo/correo';
 import { createTestEnv, registrarCliente, type TestEnv } from './helpers';
 
@@ -117,6 +117,55 @@ describe('débito automático de Mercado Pago', () => {
     });
     env.mp.crearSuscripcion.mockResolvedValueOnce({ id: 'pre-2', initPoint: 'https://mp.test/2' });
     expect((await checkout()).json()).toEqual({ initPoint: 'https://mp.test/2' });
+  });
+
+  const suscripcion = () => env.deps.prisma.subscription.findUniqueOrThrow({ where: { tenantId: 'ana' } });
+  const cobroMp = (id: string, fecha: Date) => ({ id, aprobado: true, estado: 'approved', importe: 84_000, preapprovalId: 'pre-1', fecha });
+
+  it('el primer pago activa el plan aunque la cuenta se haya creado meses antes', async () => {
+    env.mp.crearSuscripcion.mockResolvedValue({ id: 'pre-1', initPoint: 'https://mp.test/1' });
+    await checkout();
+    env.clock.now = new Date('2027-01-20T15:00:00Z');
+    env.mp.obtenerPago.mockResolvedValue(cobroMp('pay-1', env.clock.now));
+    await env.app.inject({ method: 'POST', url: '/webhooks/mercadopago', payload: { type: 'payment', data: { id: 'pay-1' } } });
+
+    const sub = await suscripcion();
+    expect(sub).toMatchObject({ estadoPago: 'al_dia', diaAbono: 20 });
+    expect(sub.vencimiento.toISOString()).toBe('2027-02-20T15:00:00.000Z');
+  });
+
+  it('el vencimiento sigue al débito de Mercado Pago y no pausa antes de que debite', async () => {
+    env.mp.crearSuscripcion.mockResolvedValue({ id: 'pre-1', initPoint: 'https://mp.test/1' });
+    await checkout();
+    await registrarPago(env.deps, 'ana', { medio: 'mercadopago', externalId: 'mp:pay-1', fecha: new Date('2026-11-24T15:00:00Z') });
+    expect((await suscripcion()).vencimiento.toISOString()).toBe('2026-12-24T15:00:00.000Z');
+
+    env.clock.now = new Date('2026-12-23T15:00:00Z');
+    expect(await revisarVencimientos(env.deps)).toEqual({ pendientes: 0, impagos: 0 });
+
+    env.clock.now = new Date('2026-12-24T16:00:00Z');
+    await registrarPago(env.deps, 'ana', { medio: 'mercadopago', externalId: 'mp:pay-2', fecha: env.clock.now });
+    const sub = await suscripcion();
+    expect(sub).toMatchObject({ estadoPago: 'al_dia', diaAbono: 24 });
+    expect(sub.vencimiento.toISOString()).toBe('2027-01-24T15:00:00.000Z');
+  });
+
+  it('si el aviso de Mercado Pago no llega, la conciliación activa y renueva el plan', async () => {
+    env.mp.crearSuscripcion.mockResolvedValue({ id: 'pre-1', initPoint: 'https://mp.test/1' });
+    await checkout();
+    env.mp.obtenerSuscripcion.mockResolvedValue({ id: 'pre-1', estado: 'authorized', externalReference: 'ana' });
+    const rechazado = { ...cobroMp('pay-0', env.clock.now), aprobado: false, estado: 'rejected' };
+    env.mp.listarPagosSuscripcion.mockResolvedValue([rechazado, cobroMp('pay-1', env.clock.now)]);
+
+    expect(await conciliarMercadoPago(env.deps)).toEqual({ revisadas: 1, pagos: 1 });
+    expect(await suscripcion()).toMatchObject({ estadoPago: 'al_dia', mpEstado: 'authorized' });
+    expect(await conciliarMercadoPago(env.deps)).toEqual({ revisadas: 0, pagos: 0 });
+
+    env.clock.now = new Date('2026-12-14T16:00:00Z');
+    env.mp.listarPagosSuscripcion.mockResolvedValue([cobroMp('pay-1', new Date('2026-11-14T15:00:00Z')), cobroMp('pay-2', env.clock.now)]);
+    expect(await conciliarMercadoPago(env.deps)).toEqual({ revisadas: 1, pagos: 1 });
+    expect((await suscripcion()).vencimiento.toISOString()).toBe('2027-01-14T15:00:00.000Z');
+    expect(await env.deps.prisma.payment.count()).toBe(2);
   });
 });
 

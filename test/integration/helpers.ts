@@ -21,6 +21,7 @@ export interface TestEnv {
     cancelarSuscripcion: ReturnType<typeof vi.fn>;
     obtenerPago: ReturnType<typeof vi.fn>;
     obtenerSuscripcion: ReturnType<typeof vi.fn>;
+    listarPagosSuscripcion: ReturnType<typeof vi.fn>;
   };
   token: string;
   reset(): Promise<void>;
@@ -53,6 +54,7 @@ export async function createTestEnv(): Promise<TestEnv> {
     cancelarSuscripcion: vi.fn().mockResolvedValue(undefined),
     obtenerPago: vi.fn<(tipo: string, id: string) => Promise<PagoMp | null>>(),
     obtenerSuscripcion: vi.fn<(id: string) => Promise<SuscripcionMp>>(),
+    listarPagosSuscripcion: vi.fn<(id: string) => Promise<PagoMp[]>>(),
     verificarFirma: () => true,
   };
   const deps = createDeps(config, {
@@ -90,6 +92,7 @@ export async function createTestEnv(): Promise<TestEnv> {
       mp.cancelarSuscripcion.mockClear();
       mp.obtenerPago.mockReset();
       mp.obtenerSuscripcion.mockReset();
+      mp.listarPagosSuscripcion.mockReset();
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',

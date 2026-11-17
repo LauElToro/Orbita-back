@@ -4,7 +4,7 @@ import { bullConnection, closeDeps, createDeps } from './deps';
 import { QUEUE_GENERACION, QUEUE_TAREAS } from './lib/keys';
 import type { JobGeneracion } from './messaging/entrada';
 import { enviarRecordatorios } from './modules/recordatorios';
-import { revisarVencimientos } from './billing/service';
+import { conciliarMercadoPago, revisarVencimientos } from './billing/service';
 import { procesarMensaje } from './worker/procesar';
 
 async function main() {
@@ -21,6 +21,7 @@ async function main() {
     async (job) => {
       if (job.name === 'recordatorios') return { enviados: await enviarRecordatorios(deps) };
       if (job.name === 'cobros') return revisarVencimientos(deps);
+      if (job.name === 'conciliar-mp') return conciliarMercadoPago(deps);
       return null;
     },
     { connection: bullConnection(config), concurrency: 1 },
@@ -28,6 +29,7 @@ async function main() {
 
   await deps.colaTareas.upsertJobScheduler('recordatorios', { every: 15 * 60_000 }, { name: 'recordatorios' });
   await deps.colaTareas.upsertJobScheduler('cobros', { every: 60 * 60_000 }, { name: 'cobros' });
+  await deps.colaTareas.upsertJobScheduler('conciliar-mp', { every: 15 * 60_000 }, { name: 'conciliar-mp' });
 
   for (const w of [generacion, tareas]) {
     w.on('failed', (job, err) => console.error(`[${w.name}] job ${job?.id} falló:`, err.message));
