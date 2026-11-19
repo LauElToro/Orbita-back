@@ -11,6 +11,8 @@ import { getTenant } from '../tenants/repo';
 import { actualizarTenant } from '../tenants/service';
 import { leerUso } from '../usage/usage';
 import { guardarWeb, rotarClaveWeb } from '../web/service';
+import { darDeBajaAvisos } from '../correo/envios';
+import { activarAfiliadoCliente, actualizarAfiliadoCliente, afiliadoDeCliente, cargarReferido } from '../afiliados/service';
 import { completarGoogle, prepararGoogle } from './google';
 import {
   activarPropio,
@@ -53,6 +55,17 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
   const firmar = (s: { userId: string; tenantId: string }) =>
     app.jwt.sign({ sub: s.userId, rol: 'cliente', tenantId: s.tenantId }, { expiresIn: '7d' });
 
+  app.get('/cuenta/avisos/baja', async (req, reply) => {
+    const token = typeof (req.query as { t?: unknown }).t === 'string' ? (req.query as { t: string }).t : '';
+    const ok = token ? await darDeBajaAvisos(deps, token) : false;
+    reply.type('text/html; charset=utf-8');
+    const titulo = ok ? 'Listo, no te mandamos más novedades' : 'Ese link no sirve';
+    const texto = ok
+      ? 'Los avisos del plan, la contraseña y los pagos siguen llegando. Solo dimos de baja la newsletter y las promociones.'
+      : 'El link está incompleto o ya no es válido.';
+    return `<!doctype html><html lang="es"><meta charset="utf-8"><title>${titulo}</title><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#1d2330"><h1 style="font-size:1.4rem">${titulo}</h1><p>${texto}</p></body></html>`;
+  });
+
   app.post('/cuenta/registro', async (req, reply) => {
     await rateLimit(deps.redis, 'registro', req.ip, 5, 3600);
     const sesion = await registrar(deps, req.body, evidencia(req));
@@ -66,7 +79,7 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post('/cuenta/login', async (req) => {
     await rateLimit(deps.redis, 'login-cliente', req.ip, 10, 900);
-    return { token: firmar(await login(deps, req.body)) };
+    return { token: firmar(await login(deps, req.body, req.ip)) };
   });
 
   app.post('/cuenta/google/iniciar', async (req) => {
@@ -76,7 +89,7 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post('/cuenta/google/callback', async (req) => {
     await rateLimit(deps.redis, 'google-vuelta', req.ip, 20, 3600);
-    return { token: firmar(await completarGoogle(deps, req.body)) };
+    return { token: firmar(await completarGoogle(deps, req.body, req.ip)) };
   });
 
   app.post('/cuenta/olvide', async (req) => {
@@ -142,6 +155,19 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
       await cambiarPlan(deps, tenantId, req.body);
       return responder(req, tenantId);
     });
+
+    cuenta.post('/cuenta/referido', async (req) => {
+      const { userId, tenantId } = tenantDeSesion(req);
+      await rateLimit(deps.redis, 'cargar-referido', tenantId, 10, 3600);
+      await cargarReferido(deps, tenantId, userId, req.body);
+      return responder(req, tenantId);
+    });
+
+    cuenta.get('/cuenta/afiliado', async (req) => ({ afiliado: await afiliadoDeCliente(deps, tenantDeSesion(req).userId) }));
+
+    cuenta.post('/cuenta/afiliado', async (req) => activarAfiliadoCliente(deps, tenantDeSesion(req).userId, req.body));
+
+    cuenta.patch('/cuenta/afiliado', async (req) => actualizarAfiliadoCliente(deps, tenantDeSesion(req).userId, req.body));
 
     cuenta.post('/cuenta/suscripcion', async (req) => {
       const tenant = await getTenant(deps.prisma, tenantDeSesion(req).tenantId);

@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type Plan } from '@prisma/client';
 import { z } from 'zod';
 import type { Deps } from '../deps';
 import { cancelarSuscripcionVieja } from '../billing/mercadopago';
@@ -177,8 +177,11 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
   const plan = planId === actual.planId ? actual.plan : await deps.prisma.plan.findUnique({ where: { id: planId } });
   if (!plan) throw notFound('Plan');
   const cantCanales = input.canales?.length ?? actual.canales.length;
-  if (cantCanales > plan.maxCanales) {
-    throw badRequest(`El plan ${plan.nombre} admite hasta ${plan.maxCanales} canal(es). Sacá un canal antes de cambiar.`);
+  const pendiente = input.planId ? null : actual.planPendiente;
+  for (const p of pendiente ? [plan, pendiente] : [plan]) {
+    if (cantCanales > p.maxCanales) {
+      throw badRequest(`El plan ${p.nombre} admite hasta ${p.maxCanales} canal(es). Sacá un canal antes de cambiar.`);
+    }
   }
 
   const personalizado = plan.id === 'personalizado';
@@ -186,13 +189,9 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
     if (personalizado && !input.precioPersonalizado && !actual.precioPersonalizado) {
       throw badRequest('El plan Personalizado necesita el importe mensual acordado');
     }
-    data.plan = { connect: { id: plan.id } };
-    data.modulos = plan.modulos;
-    data.topeDia = plan.topeDia;
-    data.topeSemana = plan.topeSemana;
-    data.topeMes = plan.topeMes;
-    if (!plan.modeloCapaz) data.modelo = 'barato';
+    Object.assign(data, datosDePlan(plan));
   }
+  if (input.planId && actual.planPendienteId) data.planPendiente = { disconnect: true };
   if (personalizado && input.modulos) data.modulos = input.modulos;
   if (personalizado && input.topes) {
     data.topeDia = input.topes.dia;
@@ -201,7 +200,7 @@ export async function actualizarTenant(deps: Deps, id: string, raw: unknown): Pr
   }
   const cambiaMedio = Boolean(input.medio && actual.subscription && input.medio !== actual.subscription.medio);
   const cambiaImporte =
-    planId !== actual.planId ||
+    Boolean(input.planId && input.planId !== (actual.planPendienteId ?? actual.planId)) ||
     Boolean(input.precioPersonalizado && input.precioPersonalizado !== actual.precioPersonalizado);
   const mpViejo = (cambiaMedio || cambiaImporte) && actual.subscription?.mpPreapprovalId;
   if (actual.subscription && (cambiaMedio || cambiaImporte)) {
@@ -235,8 +234,25 @@ export async function actualizarPrompt(deps: Deps, id: string, raw: unknown): Pr
   return getTenant(deps.prisma, id);
 }
 
+/** Lo que se reescribe en la ficha cuando un plan entra en vigencia. */
+export function datosDePlan(plan: Plan) {
+  return {
+    plan: { connect: { id: plan.id } },
+    modulos: plan.modulos,
+    topeDia: plan.topeDia,
+    topeSemana: plan.topeSemana,
+    topeMes: plan.topeMes,
+    ...(plan.modeloCapaz ? {} : { modelo: 'barato' }),
+  } satisfies Prisma.TenantUpdateInput;
+}
+
+/** El plan del próximo cobro: el pendiente si el cliente pidió cambiar, si no el vigente. */
+export function planACobrar(tenant: TenantFull): Plan {
+  return tenant.planPendiente ?? tenant.plan;
+}
+
 export function importeDe(tenant: TenantFull): number {
-  return precioDe(tenant.plan, tenant.subscription?.medio ?? 'transferencia', tenant.precioPersonalizado);
+  return precioDe(planACobrar(tenant), tenant.subscription?.medio ?? 'transferencia', tenant.precioPersonalizado);
 }
 
 /** Un token nunca sale completo. `null` si todavía no se cargó. */

@@ -1,4 +1,5 @@
 import type { Config } from '../config';
+import { avisarSesion } from '../correo/envios';
 import type { Deps } from '../deps';
 import { randomToken } from '../lib/crypto';
 import { HttpError } from '../lib/errors';
@@ -54,7 +55,8 @@ async function perfilDeCodigo(config: Config, code: string): Promise<PerfilGoogl
   return { email: info.email.toLowerCase(), email_verified: info.email_verified === true, nombre: info.name?.trim() || '' };
 }
 
-type PedidoGoogle = { modo: 'login' } | { modo: 'registro'; ref?: string };
+/** Desde el login también se puede crear la cuenta si no existe, por eso ambos modos llevan el código de referido. */
+type PedidoGoogle = { modo: 'login' | 'registro'; ref?: string };
 
 export async function prepararGoogle(deps: Deps, raw: unknown): Promise<{ url: string }> {
   if (!deps.config.GOOGLE_CLIENT_ID || !deps.config.GOOGLE_CLIENT_SECRET) {
@@ -66,7 +68,7 @@ export async function prepararGoogle(deps: Deps, raw: unknown): Promise<{ url: s
   return { url: urlAutorizacionGoogle(deps.config, state) };
 }
 
-export async function completarGoogle(deps: Deps, raw: unknown) {
+export async function completarGoogle(deps: Deps, raw: unknown, ip?: string) {
   const { code, state } = parseVuelta(raw);
   const guardado = await deps.redis.get(keys.googleState(state));
   if (!guardado) throw new HttpError(400, 'El ingreso con Google venció. Probá de nuevo.');
@@ -78,20 +80,18 @@ export async function completarGoogle(deps: Deps, raw: unknown) {
   const existente = await deps.prisma.clientUser.findUnique({ where: { email: perfil.email } });
   if (existente) {
     await deps.prisma.clientUser.update({ where: { id: existente.id }, data: { ultimoLogin: deps.now() } });
+    void avisarSesion(deps, existente, ip);
     return { userId: existente.id, tenantId: existente.tenantId };
   }
-  return registrarConGoogle(deps, perfil, pedido.modo === 'registro' ? pedido.ref : undefined);
+  return registrarConGoogle(deps, perfil, pedido.ref);
 }
 
 function parsePedido(raw: unknown): PedidoGoogle {
   if (!raw || typeof raw !== 'object') throw new HttpError(400, 'Pedido inválido');
   const body = raw as Record<string, unknown>;
-  if (body.modo === 'login') return { modo: 'login' };
-  if (body.modo === 'registro') {
-    const ref = typeof body.ref === 'string' && body.ref.trim() ? body.ref.trim().slice(0, 40) : undefined;
-    return ref ? { modo: 'registro', ref } : { modo: 'registro' };
-  }
-  throw new HttpError(400, 'Pedido inválido');
+  if (body.modo !== 'login' && body.modo !== 'registro') throw new HttpError(400, 'Pedido inválido');
+  const ref = typeof body.ref === 'string' && body.ref.trim() ? body.ref.trim().slice(0, 40) : undefined;
+  return ref ? { modo: body.modo, ref } : { modo: body.modo };
 }
 
 function parseVuelta(raw: unknown): { code: string; state: string } {

@@ -4,16 +4,19 @@ import { z } from 'zod';
 import type { Deps } from '../deps';
 import { atribuirReferido } from '../afiliados/service';
 import { compilarPrompt, perfilSchema } from '../ai/perfil';
+import { cancelarSuscripcionVieja } from '../billing/mercadopago';
 import { iniciarSuscripcionMp } from '../billing/service';
 import { randomToken, sha256 } from '../lib/crypto';
 import { addDays, localParts } from '../lib/dates';
-import { conflict, HttpError, notFound } from '../lib/errors';
+import { badRequest, conflict, HttpError, notFound } from '../lib/errors';
 import { hashPassword, verifyPassword } from '../lib/password';
 import { slugify } from '../lib/slug';
 import { documentosPendientes, registrarAceptacion, type Evidencia, type DocumentoLegal } from '../legal/legal';
 import { MENSAJES_DEFAULT, leerMensajes } from '../tenants/defaults';
 import { getTenant, type TenantFull } from '../tenants/repo';
-import { avisoOrbita, enviarCorreo } from '../correo/correo';
+import { enviarCorreo } from '../correo/correo';
+import { avisarSesion } from '../correo/envios';
+import { mensajeBienvenida, mensajeBienvenidaGoogle, mensajeDefinirContrasena, mensajeRestablecer } from '../correo/plantillas';
 import { actualizarTenant, canalesDto, canalSchema, importeDe } from '../tenants/service';
 import { webDto } from '../web/service';
 
@@ -110,16 +113,7 @@ export async function registrar(deps: Deps, raw: unknown, evidencia: Evidencia) 
     ref: input.ref,
   });
   await registrarAceptacion(deps.prisma, usuario.id, ['terminos', 'privacidad'], evidencia);
-  await enviarCorreo(
-    deps.correo,
-    avisoOrbita(
-      input.email,
-      'Tu cuenta de Orbita está lista',
-      `Hola ${input.nombre}, ya creamos la cuenta de ${input.negocio}.`,
-      'Podés recorrer el panel ahora. La IA se habilita cuando se acredita el pago con Mercado Pago.',
-      { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
-    ),
-  );
+  await enviarCorreo(deps.correo, mensajeBienvenida({ email: input.email, nombre: input.nombre }, input.negocio, deps.config.PUBLIC_URL));
   return { userId: usuario.id, tenantId: usuario.tenantId };
 }
 
@@ -135,16 +129,7 @@ export async function registrarConGoogle(deps: Deps, perfil: { email: string; no
     password: randomToken(24),
     ref,
   });
-  await enviarCorreo(
-    deps.correo,
-    avisoOrbita(
-      perfil.email,
-      'Tu cuenta de Orbita está lista',
-      `Hola ${nombre}, ya creamos tu cuenta de Orbita.`,
-      'Cuando quieras, cargá el nombre y el rubro de tu negocio y elegí un plan. La IA se habilita cuando se acredita el pago con Mercado Pago.',
-      { texto: 'Entrar al panel', url: `${deps.config.PUBLIC_URL}/cuenta` },
-    ),
-  );
+  await enviarCorreo(deps.correo, mensajeBienvenidaGoogle({ email: perfil.email, nombre }, deps.config.PUBLIC_URL));
   return { userId: usuario.id, tenantId: usuario.tenantId };
 }
 
@@ -174,7 +159,7 @@ export async function checkoutPublico(deps: Deps, raw: unknown, evidencia: Evide
       throw conflict('Ya tenés una cuenta con ese email. Ingresá para gestionar tu plan.');
     }
     tenantId = tenant.id;
-    if (tenant.planId !== input.planId || !tenant.planElegido) await cambiarPlan(deps, tenantId, { planId: input.planId });
+    await cambiarPlan(deps, tenantId, { planId: input.planId });
     const pendientes = await documentosPendientes(deps.prisma, existente.id);
     if (pendientes.length) await registrarAceptacion(deps.prisma, existente.id, pendientes, evidencia);
   } else {
@@ -193,16 +178,7 @@ export async function checkoutPublico(deps: Deps, raw: unknown, evidencia: Evide
   }
 
   const { link } = await generarReset(deps, tenantId, DIAS_LINK_CHECKOUT);
-  await enviarCorreo(
-    deps.correo,
-    avisoOrbita(
-      input.email,
-      'Definí tu contraseña de Orbita',
-      'Ya creamos tu cuenta de Orbita. Elegí una contraseña para entrar al panel.',
-      `El link vence en ${DIAS_LINK_CHECKOUT} días. La IA se habilita cuando se acredita el pago con Mercado Pago.`,
-      { texto: 'Definir mi contraseña', url: link },
-    ),
-  );
+  await enviarCorreo(deps.correo, mensajeDefinirContrasena(input.email, link, DIAS_LINK_CHECKOUT));
   const tenant = await getTenant(deps.prisma, tenantId);
   return iniciarSuscripcionMp(deps, tenant, input.email, `${deps.config.PUBLIC_URL}/checkout/gracias`);
 }
@@ -218,13 +194,14 @@ export async function guardarDatosNegocio(deps: Deps, tenantId: string, raw: unk
   return getTenant(deps.prisma, tenantId);
 }
 
-export async function login(deps: Deps, raw: unknown) {
+export async function login(deps: Deps, raw: unknown, ip?: string) {
   const { email, password: pass } = loginSchema.parse(raw);
   const usuario = await deps.prisma.clientUser.findUnique({ where: { email } });
   if (!usuario || !(await verifyPassword(pass, usuario.passwordHash))) {
     throw new HttpError(401, 'Email o contraseña incorrectos');
   }
   await deps.prisma.clientUser.update({ where: { id: usuario.id }, data: { ultimoLogin: deps.now() } });
+  void avisarSesion(deps, usuario, ip);
   return { userId: usuario.id, tenantId: usuario.tenantId };
 }
 
@@ -254,16 +231,7 @@ export async function pedirRestablecimiento(deps: Deps, raw: unknown) {
   const usuario = await deps.prisma.clientUser.findUnique({ where: { email } });
   if (!usuario) return;
   const { link } = await generarReset(deps, usuario.tenantId);
-  await enviarCorreo(
-    deps.correo,
-    avisoOrbita(
-      email,
-      'Restablecé tu contraseña de Orbita',
-      `Hola ${usuario.nombre}, recibimos un pedido para cambiar la contraseña de tu cuenta.`,
-      'El link vence en 24 horas. Si no pediste este cambio, ignorá el mensaje.',
-      { texto: 'Elegir una contraseña nueva', url: link },
-    ),
-  );
+  await enviarCorreo(deps.correo, mensajeRestablecer(usuario, link));
 }
 
 /** Da acceso a una ficha creada por el equipo: el cliente define su contraseña con el link y acepta los documentos al entrar. */
@@ -326,6 +294,7 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
       topes: { dia: tenant.topeDia, semana: tenant.topeSemana, mes: tenant.topeMes },
     },
     plan: tenant.plan,
+    planPendiente: tenant.planPendiente,
     planElegido: tenant.planElegido,
     canales: canalesDto(deps, tenant.canales),
     web: webDto(deps, tenant),
@@ -340,6 +309,8 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
         }
       : null,
     transferencia: sub?.medio === 'transferencia' ? { alias: deps.config.TRANSFER_ALIAS, importe, concepto: tenant.id } : null,
+    referido: tenant.referido ? { codigo: tenant.referido.affiliate.codigo } : null,
+    referidoEditable: !tenant.referido && tenant._count.payments === 0,
     onboarding: {
       paso: tenant.onboardingPaso,
       completado: tenant.onboardingCompletado,
@@ -377,10 +348,43 @@ export async function cambiarPlan(deps: Deps, tenantId: string, raw: unknown) {
     throw conflict('Tu plan es Personalizado: los cambios se coordinan con el equipo de Orbita');
   }
   const input = planSchema.parse(raw);
-  const actualizado = await actualizarTenant(deps, tenantId, input);
-  if (!input.planId || tenant.planElegido) return actualizado;
-  await deps.prisma.tenant.update({ where: { id: tenantId }, data: { planElegido: true } });
+  if (!tenant.planElegido) {
+    const actualizado = await actualizarTenant(deps, tenantId, input);
+    if (!input.planId) return actualizado;
+    await deps.prisma.tenant.update({ where: { id: tenantId }, data: { planElegido: true } });
+    return getTenant(deps.prisma, tenantId);
+  }
+  if (input.medio) await actualizarTenant(deps, tenantId, { medio: input.medio });
+  if (input.planId) await programarPlan(deps, tenantId, input.planId);
   return getTenant(deps.prisma, tenantId);
+}
+
+/**
+ * El plan nuevo no se aplica hasta que se acredita un pago por su importe (ver `registrarPago`).
+ * Volver a elegir el plan vigente descarta el cambio pendiente.
+ */
+async function programarPlan(deps: Deps, tenantId: string, planId: string) {
+  const tenant = await getTenant(deps.prisma, tenantId);
+  const pendienteId = planId === tenant.planId ? null : planId;
+  if (pendienteId === tenant.planPendienteId) return;
+  if (pendienteId) {
+    const plan = await deps.prisma.plan.findUnique({ where: { id: pendienteId } });
+    if (!plan) throw notFound('Plan');
+    if (tenant.canales.length > plan.maxCanales) {
+      throw badRequest(`El plan ${plan.nombre} admite hasta ${plan.maxCanales} canal(es). Sacá un canal antes de cambiar.`);
+    }
+  }
+  const mpViejo = tenant.subscription?.mpPreapprovalId;
+  await deps.prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      planPendiente: pendienteId ? { connect: { id: pendienteId } } : { disconnect: true },
+      ...(tenant.subscription
+        ? { subscription: { update: { mpPreapprovalId: null, mpInitPoint: null, mpEstado: null } } }
+        : {}),
+    },
+  });
+  if (mpViejo) await cancelarSuscripcionVieja(deps.mercadopago, mpViejo);
 }
 
 export async function avanzarOnboarding(deps: Deps, tenantId: string, raw: unknown) {

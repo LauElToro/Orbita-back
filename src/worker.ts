@@ -5,6 +5,7 @@ import { QUEUE_GENERACION, QUEUE_TAREAS } from './lib/keys';
 import type { JobGeneracion } from './messaging/entrada';
 import { enviarRecordatorios } from './modules/recordatorios';
 import { conciliarMercadoPago, revisarVencimientos } from './billing/service';
+import { enviarAvisosProgramados } from './correo/campanas';
 import { procesarMensaje } from './worker/procesar';
 
 async function main() {
@@ -20,7 +21,11 @@ async function main() {
     QUEUE_TAREAS,
     async (job) => {
       if (job.name === 'recordatorios') return { enviados: await enviarRecordatorios(deps) };
-      if (job.name === 'cobros') return revisarVencimientos(deps);
+      if (job.name === 'cobros') {
+        const cobros = await revisarVencimientos(deps);
+        const avisos = await enviarAvisosProgramados(deps);
+        return { ...cobros, avisos: avisos.enviados };
+      }
       if (job.name === 'conciliar-mp') return conciliarMercadoPago(deps);
       return null;
     },

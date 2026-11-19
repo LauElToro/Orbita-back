@@ -238,9 +238,22 @@ describe('plan y pago del cliente', () => {
     });
 
     const completo = (await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'completo' })).json();
-    expect(completo).toMatchObject({ plan: { id: 'completo' }, suscripcion: { importe: 115_000, mpInitPoint: null } });
-    expect(completo.negocio.modulos).toContain('recordatorios');
+    expect(completo).toMatchObject({
+      plan: { id: 'turnos' },
+      planPendiente: { id: 'completo' },
+      suscripcion: { importe: 115_000, mpInitPoint: null },
+    });
+    expect(completo.negocio.modulos).not.toContain('recordatorios');
     expect(env.mp.cancelarSuscripcion).toHaveBeenCalledWith('pre-1');
+
+    env.mp.crearSuscripcion.mockResolvedValue({ id: 'pre-2', initPoint: 'https://mp.test/2' });
+    await llamar(headers, 'POST', '/cuenta/suscripcion');
+    expect(env.mp.crearSuscripcion.mock.calls[1][0]).toMatchObject({ importe: 115_000, reason: expect.stringContaining('Plan Completo') });
+
+    await pagar('peluqueria-luna');
+    const pagado = (await llamar(headers, 'GET', '/cuenta/me')).json();
+    expect(pagado).toMatchObject({ plan: { id: 'completo' }, planPendiente: null });
+    expect(pagado.negocio.modulos).toContain('recordatorios');
 
     expect((await llamar(headers, 'PATCH', '/cuenta/plan', { medio: 'transferencia' })).statusCode).toBe(400);
     expect((await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'personalizado' })).statusCode).toBe(400);
@@ -250,6 +263,23 @@ describe('plan y pago del cliente', () => {
       data: { planId: 'personalizado', precioPersonalizado: 200_000 },
     });
     expect((await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'mensajes' })).statusCode).toBe(409);
+  });
+
+  it('sin pagar no cambia de plan, y volver al plan vigente descarta el cambio', async () => {
+    const { headers } = await registrarCliente(env, { medio: 'mercadopago' });
+    const pedido = (await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'mensajes' })).json();
+    expect(pedido).toMatchObject({ plan: { id: 'turnos' }, planPendiente: { id: 'mensajes' }, suscripcion: { importe: 42_000 } });
+    expect(pedido.negocio.modulos).toContain('turnos');
+
+    const vuelta = (await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'turnos' })).json();
+    expect(vuelta).toMatchObject({ plan: { id: 'turnos' }, planPendiente: null, suscripcion: { importe: 84_000 } });
+  });
+
+  it('un cobro por el importe viejo no aplica el plan pendiente', async () => {
+    const { headers } = await registrarCliente(env, { medio: 'mercadopago' });
+    await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'completo' });
+    await registrarPago(env.deps, 'peluqueria-luna', { medio: 'mercadopago', importe: 84_000 });
+    expect((await llamar(headers, 'GET', '/cuenta/me')).json()).toMatchObject({ plan: { id: 'turnos' }, planPendiente: { id: 'completo' } });
   });
 
   it('el admin ve la cuenta del cliente en la ficha', async () => {

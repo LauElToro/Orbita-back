@@ -4,8 +4,9 @@ import type { Deps } from '../deps';
 import { HttpError } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
 import {
+  actualizarAfiliado,
   cambiarEstadoComision,
-  datosCobro,
+  codigoValido,
   listarAfiliados,
   listarComisiones,
   loginAfiliado,
@@ -48,6 +49,12 @@ export function registerAfiliadoRoutes(app: FastifyInstance, deps: Deps): void {
     return { ok: true };
   });
 
+  app.get('/publico/referido/:codigo', async (req) => {
+    await rateLimit(deps.redis, 'referido', req.ip, 30, 60);
+    const { codigo } = z.object({ codigo: z.string().max(60) }).parse(req.params);
+    return { valido: await codigoValido(deps, codigo) };
+  });
+
   app.register(async (afiliado) => {
     afiliado.addHook('onRequest', afiliado.requireAfiliado);
 
@@ -55,7 +62,7 @@ export function registerAfiliadoRoutes(app: FastifyInstance, deps: Deps): void {
 
     afiliado.patch('/afiliados/me', async (req) => {
       const id = afiliadoDeSesion(req);
-      await datosCobro(deps, id, req.body);
+      await actualizarAfiliado(deps, id, req.body);
       return panelAfiliado(deps, id);
     });
   });

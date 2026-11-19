@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { conciliarMercadoPago, registrarPago, revisarVencimientos } from '../../src/billing/service';
 import type { MensajeCorreo } from '../../src/correo/correo';
-import { createTestEnv, registrarCliente, type TestEnv } from './helpers';
+import { createTestEnv, registrarCliente, registroBase, type TestEnv } from './helpers';
 
 let env: TestEnv;
 let correos: MensajeCorreo[];
@@ -68,7 +68,7 @@ describe('checkout sin sesión', () => {
     expect((await checkout({ email: 'no-es-mail' })).statusCode).toBe(400);
   });
 
-  it('retoma el checkout de una cuenta sin pagar y cambia el plan', async () => {
+  it('retoma el checkout de una cuenta sin pagar y cobra el plan nuevo', async () => {
     env.mp.crearSuscripcion.mockResolvedValueOnce({ id: 'pre-1', initPoint: 'https://mp.test/1' });
     await checkout();
     env.mp.crearSuscripcion.mockResolvedValueOnce({ id: 'pre-2', initPoint: 'https://mp.test/2' });
@@ -76,9 +76,12 @@ describe('checkout sin sesión', () => {
     expect(otra.json()).toEqual({ initPoint: 'https://mp.test/2' });
     expect(env.mp.cancelarSuscripcion).toHaveBeenCalledWith('pre-1');
     expect(await env.deps.prisma.tenant.count()).toBe(1);
-    expect((await env.deps.prisma.tenant.findFirstOrThrow()).planId).toBe('completo');
+    expect(await env.deps.prisma.tenant.findFirstOrThrow()).toMatchObject({ planId: 'turnos', planPendienteId: 'completo' });
+    expect(env.mp.crearSuscripcion.mock.calls[1][0]).toMatchObject({ importe: 115_000 });
 
     expect((await checkout({ planId: 'completo' })).json()).toEqual({ initPoint: 'https://mp.test/2' });
+    await registrarPago(env.deps, 'ana', { medio: 'mercadopago' });
+    expect(await env.deps.prisma.tenant.findFirstOrThrow()).toMatchObject({ planId: 'completo', planPendienteId: null });
   });
 
   it('rechaza el checkout de una cuenta que ya pagó', async () => {
@@ -264,6 +267,68 @@ describe('afiliados', () => {
     env.mp.obtenerPago.mockResolvedValueOnce({ ...pago, aprobado: false, estado: 'refunded' });
     await webhook();
     expect((await env.deps.prisma.commission.findFirstOrThrow()).estado).toBe('anulada');
+  });
+
+  it('el afiliado personaliza su código y el link viejo deja de atribuir', async () => {
+    const { headers, codigo } = await afiliado();
+    const patch = (payload: Record<string, string>) => env.app.inject({ method: 'PATCH', url: '/afiliados/me', headers, payload });
+    expect((await patch({ codigo: '-mal' })).statusCode).toBe(400);
+    expect((await patch({ codigo: 'ab' })).statusCode).toBe(400);
+    const ok = await patch({ codigo: 'Juan-Recomienda' });
+    expect(ok.json()).toMatchObject({ codigo: 'juan-recomienda', link: 'https://orbita.test/?ref=juan-recomienda' });
+
+    const otro = await afiliado('Otra Socia', 'otra@socia.com');
+    const tomado = await env.app.inject({ method: 'PATCH', url: '/afiliados/me', headers: otro.headers, payload: { codigo: 'juan-recomienda' } });
+    expect(tomado.statusCode).toBe(409);
+
+    const valido = (c: string) => env.app.inject({ method: 'GET', url: `/publico/referido/${c}` }).then((r) => r.json().valido);
+    expect(await valido('juan-recomienda')).toBe(true);
+    expect(await valido(codigo)).toBe(false);
+
+    await registrarCliente(env, { ref: codigo });
+    expect(await env.deps.prisma.referral.count()).toBe(0);
+  });
+
+  it('un cliente activa su propio link, lo personaliza y no puede autoreferirse', async () => {
+    const { headers } = await registrarCliente(env);
+    const leer = () => env.app.inject({ method: 'GET', url: '/cuenta/afiliado', headers }).then((r) => r.json());
+    expect(await leer()).toEqual({ afiliado: null });
+
+    const sinTerminos = await env.app.inject({ method: 'POST', url: '/cuenta/afiliado', headers, payload: {} });
+    expect(sinTerminos.statusCode).toBe(400);
+    const activo = await env.app.inject({ method: 'POST', url: '/cuenta/afiliado', headers, payload: { aceptaTerminos: true } });
+    expect(activo.statusCode).toBe(200);
+    expect((await leer()).afiliado.email).toBe(registroBase.email);
+
+    const cambio = await env.app.inject({ method: 'PATCH', url: '/cuenta/afiliado', headers, payload: { codigo: 'luna', datosCobro: 'luna.mp' } });
+    expect(cambio.json()).toMatchObject({ codigo: 'luna', datosCobro: 'luna.mp' });
+
+    const propio = await env.app.inject({ method: 'POST', url: '/cuenta/referido', headers, payload: { codigo: 'luna' } });
+    expect(propio.statusCode).toBe(400);
+
+    const nuevo = await registrarCliente(env, { email: 'nuevo@kiosco.com', negocio: 'Kiosco Nuevo', ref: 'luna' });
+    const panel = (await leer()).afiliado;
+    expect(panel.referidos).toMatchObject([{ negocio: 'Kiosco Nuevo' }]);
+    const cuentaNueva = (await env.app.inject({ method: 'GET', url: '/cuenta/me', headers: nuevo.headers })).json();
+    expect(cuentaNueva).toMatchObject({ referido: { codigo: 'luna' }, referidoEditable: false });
+  });
+
+  it('el cliente carga un referido una sola vez y antes del primer pago', async () => {
+    const { codigo } = await afiliado();
+    const { headers } = await registrarCliente(env);
+    const me = () => env.app.inject({ method: 'GET', url: '/cuenta/me', headers }).then((r) => r.json());
+    expect(await me()).toMatchObject({ referido: null, referidoEditable: true });
+
+    const cargar = (c: string) => env.app.inject({ method: 'POST', url: '/cuenta/referido', headers, payload: { codigo: c } });
+    expect((await cargar('no-existe')).statusCode).toBe(400);
+    const ok = await cargar(codigo.toUpperCase());
+    expect(ok.json()).toMatchObject({ referido: { codigo }, referidoEditable: false });
+    expect((await cargar(codigo)).statusCode).toBe(409);
+
+    const otro = await registrarCliente(env, { email: 'otro@kiosco.com', negocio: 'Otro Kiosco' });
+    await registrarPago(env.deps, 'otro-kiosco', { medio: 'mercadopago' });
+    const tarde = await env.app.inject({ method: 'POST', url: '/cuenta/referido', headers: otro.headers, payload: { codigo } });
+    expect(tarde.statusCode).toBe(409);
   });
 
   it('el admin anula una comisión pendiente', async () => {

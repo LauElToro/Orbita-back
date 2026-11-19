@@ -5,7 +5,10 @@ import { comisionarPrimerPago } from '../afiliados/service';
 import { addDays, addMonths, localParts } from '../lib/dates';
 import { conflict, HttpError, notFound } from '../lib/errors';
 import { getTenant, type TenantFull } from '../tenants/repo';
-import { importeDe } from '../tenants/service';
+import { correoPlan } from '../correo/campanas';
+import { mensajeCompra } from '../correo/plantillas';
+import { enviarCorreo } from '../correo/correo';
+import { datosDePlan, importeDe, planACobrar } from '../tenants/service';
 
 export const DIAS_GRACIA = 7;
 export const DIAS_ACREDITACION_MP = 18;
@@ -35,13 +38,16 @@ export async function registrarPago(deps: Deps, tenantId: string, pago: PagoInpu
   const desde = reinicia ? now : sub.vencimiento;
   const nuevoVencimiento = addMonths(desde, 1, diaAbono);
   const alDia = nuevoVencimiento > deps.now();
+  const importe = pago.importe ?? importeDe(tenant);
+  // Un cobro viejo por el importe anterior no alcanza para pasar al plan pendiente.
+  const nuevoPlan = tenant.planPendiente && importe >= importeDe(tenant) ? tenant.planPendiente : null;
 
   const [payment] = await deps.prisma.$transaction([
     deps.prisma.payment.create({
       data: {
         tenantId,
         medio: pago.medio,
-        importe: pago.importe ?? importeDe(tenant),
+        importe,
         periodo: desde.toISOString().slice(0, 10),
         externalId: pago.externalId ?? null,
         acreditaEn: pago.medio === 'mercadopago' ? addDays(now, DIAS_ACREDITACION_MP) : now,
@@ -53,13 +59,28 @@ export async function registrarPago(deps: Deps, tenantId: string, pago: PagoInpu
     }),
     deps.prisma.tenant.update({
       where: { id: tenantId },
-      data:
-        alDia && tenant.estado === 'pausado' && tenant.pausaMotivo === 'impago'
-          ? { estado: 'activo', pausaMotivo: null }
-          : {},
+      data: {
+        ...(alDia && tenant.estado === 'pausado' && tenant.pausaMotivo === 'impago' ? { estado: 'activo', pausaMotivo: null } : {}),
+        ...(nuevoPlan ? { ...datosDePlan(nuevoPlan), planPendiente: { disconnect: true } } : {}),
+      },
     }),
   ]);
   await comisionarPrimerPago(deps, tenantId, payment, now);
+  const email = tenant.usuario?.email;
+  if (email) {
+    await enviarCorreo(
+      deps.correo,
+      mensajeCompra(
+        { email, nombre: tenant.usuario?.nombre ?? tenant.nombre },
+        tenant.nombre,
+        (nuevoPlan ?? tenant.plan).nombre,
+        payment.importe,
+        nuevoVencimiento,
+        pagosPrevios === 0,
+        deps.config.PUBLIC_URL,
+      ),
+    );
+  }
   return payment;
 }
 
@@ -76,7 +97,7 @@ export async function iniciarSuscripcionMp(deps: Deps, tenant: TenantFull, email
   if (!payerEmail) throw new HttpError(400, 'Necesitamos un email para la suscripción');
 
   const { id, initPoint } = await deps.mercadopago.crearSuscripcion({
-    reason: `Orbita - Plan ${tenant.plan.nombre} - ${tenant.nombre}`,
+    reason: `Orbita - Plan ${planACobrar(tenant).nombre} - ${tenant.nombre}`,
     externalReference: tenant.id,
     payerEmail,
     importe: importeDe(tenant),
@@ -174,10 +195,15 @@ export async function activar(deps: Deps, tenantId: string) {
 /** Corre cada hora: vencido pasa a pendiente; vencido hace más de 7 días pasa a impago y pausa el bot. */
 export async function revisarVencimientos(deps: Deps): Promise<{ pendientes: number; impagos: number }> {
   const now = deps.now();
+  const aVencer = await deps.prisma.subscription.findMany({
+    where: { estadoPago: 'al_dia', vencimiento: { lt: now } },
+    select: { tenantId: true },
+  });
   const pendientes = await deps.prisma.subscription.updateMany({
     where: { estadoPago: 'al_dia', vencimiento: { lt: now } },
     data: { estadoPago: 'pendiente' },
   });
+  for (const { tenantId } of aVencer) await correoPlan(deps, tenantId, 'vencio');
   const limite = addDays(now, -DIAS_GRACIA);
   const vencidas = await deps.prisma.subscription.findMany({
     where: { estadoPago: { not: 'impago' }, vencimiento: { lt: limite } },
@@ -191,6 +217,7 @@ export async function revisarVencimientos(deps: Deps): Promise<{ pendientes: num
         data: { estado: 'pausado', pausaMotivo: 'impago' },
       }),
     ]);
+    await correoPlan(deps, tenantId, 'impago');
   }
   return { pendientes: pendientes.count, impagos: vencidas.length };
 }

@@ -5,9 +5,12 @@ import { notFound } from '../lib/errors';
 
 export const tenantInclude = {
   plan: true,
+  planPendiente: true,
   subscription: true,
   canales: true,
   usuario: { select: { id: true, email: true, nombre: true, ultimoLogin: true, createdAt: true } },
+  referido: { select: { affiliate: { select: { codigo: true } } } },
+  _count: { select: { payments: true } },
 } satisfies Prisma.TenantInclude;
 
 export type TenantFull = Prisma.TenantGetPayload<{ include: typeof tenantInclude }>;

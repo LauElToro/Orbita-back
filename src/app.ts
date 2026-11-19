@@ -13,6 +13,7 @@ import { registerCuentaRoutes } from './cuenta/routes';
 import { registerMetricasRoutes } from './admin/metricas';
 import { registerWebRoutes } from './web/routes';
 import { registerAfiliadoRoutes } from './afiliados/routes';
+import { LOGO_MAIL_PNG } from './correo/logo';
 
 export interface AppOptions {
   logger?: boolean;
@@ -45,6 +46,10 @@ export async function buildApp(deps: Deps, opts: AppOptions = {}): Promise<Fasti
     await deps.prisma.$queryRaw`SELECT 1`;
     return { ok: true };
   });
+
+  app.get('/mail/logo.png', async (_req, reply) =>
+    reply.type('image/png').header('cache-control', 'public, max-age=604800').send(LOGO_MAIL_PNG),
+  );
 
   await registerAuth(app, deps);
   registerMessagingRoutes(app, deps);

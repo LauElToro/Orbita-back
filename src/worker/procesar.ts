@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { Deps } from '../deps';
 import { armarContexto } from '../ai/contexto';
 import { agregarAlHistorial, leerHistorial, limpiarFormato } from '../ai/prompt';
+import { avisarSiLlegoAlLimite } from '../correo/campanas';
 import { avisoOrbita, enviarCorreo } from '../correo/correo';
 import { addHours } from '../lib/dates';
 import { keys } from '../lib/keys';
@@ -77,6 +78,7 @@ export async function responderConsulta(deps: Deps, tenant: TenantFull, consulta
   try {
     const salida = await generar(deps, ctx);
     await sumarUso(deps, tenant);
+    void avisarSiLlegoAlLimite(deps, tenant);
     await guardarHistorial(deps, tenant.id, consulta.subscriberId, consulta.texto, salida.texto);
     return { texto: salida.texto, handoff: Boolean(salida.handoff), tope: false };
   } catch (err) {

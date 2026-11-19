@@ -74,6 +74,7 @@ model Plan {
   maxCanales          Int
   modeloCapaz         Boolean  @default(false)
   tenants             Tenant[]
+  tenantsPendientes   Tenant[] @relation("PlanPendiente")
 }
 
 model Tenant {
@@ -84,6 +85,8 @@ model Tenant {
   planId              String
   plan                Plan          @relation(fields: [planId], references: [id])
   planElegido         Boolean       @default(true)
+  planPendienteId     String?
+  planPendiente       Plan?         @relation("PlanPendiente", fields: [planPendienteId], references: [id])
   timezone            String        @default("America/Argentina/Buenos_Aires")
   rubro               String?
   perfil              Json?
@@ -118,6 +121,7 @@ model Tenant {
   demoFuentes         DemoFuente[]
   referido            Referral?
   comision            Commission?
+  correos             CorreoEnviado[]
 }
 
 model DemoFuente {
@@ -141,10 +145,25 @@ model ClientUser {
   nombre         String
   passwordHash   String
   resetTokenHash String?           @unique
-  resetExpira    DateTime?
-  ultimoLogin    DateTime?
-  createdAt      DateTime          @default(now())
-  aceptaciones   LegalAcceptance[]
+  resetExpira       DateTime?
+  ultimoLogin       DateTime?
+  avisosComerciales Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  aceptaciones      LegalAcceptance[]
+  afiliado          Affiliate?
+}
+
+model CorreoEnviado {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email     String
+  tipo      String
+  clave     String
+  createdAt DateTime @default(now())
+
+  @@unique([email, tipo, clave])
+  @@index([tenantId, tipo])
 }
 
 model LegalAcceptance {
@@ -232,6 +251,8 @@ model Affiliate {
   resetTokenHash String?      @unique
   resetExpira    DateTime?
   aceptaTerminos DateTime
+  clientUserId   String?      @unique
+  clientUser     ClientUser?  @relation(fields: [clientUserId], references: [id], onDelete: SetNull)
   createdAt      DateTime     @default(now())
   referidos      Referral[]
   comisiones     Commission[]

@@ -53,7 +53,7 @@ export async function registrarAfiliado(deps: Deps, raw: unknown) {
       input.email,
       'Bienvenido al programa de afiliados de Orbita',
       `Hola ${input.nombre}, ya tenés tu link de referidos.`,
-      `Por cada comercio que contrate un plan con tu link te llevás el ${COMISION_REFERIDO * 100}% de su primer pago. Te lo pagamos entre ${DIAS_COMISION_DESDE} y ${DIAS_COMISION_HASTA} días después de ese pago.`,
+      `Por cada comercio que contrate un plan con tu link te llevás el ${COMISION_REFERIDO * 100}% de su primer pago.`,
       { texto: 'Ver mi panel', url: `${deps.config.PUBLIC_URL}/afiliados/panel` },
     ),
   );
@@ -103,12 +103,101 @@ export async function restablecerAfiliado(deps: Deps, raw: unknown) {
   });
 }
 
-export async function datosCobro(deps: Deps, affiliateId: string, raw: unknown) {
-  const input = z.object({ datosCobro: z.string().trim().max(300).nullable() }).parse(raw);
-  await deps.prisma.affiliate.update({
-    where: { id: affiliateId },
-    data: { datosCobro: input.datosCobro || null },
+export const codigoSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9](?:[a-z0-9-]{1,38})[a-z0-9]$/, 'El código lleva entre 3 y 40 letras, números o guiones, sin guion al principio ni al final');
+
+const actualizarAfiliadoSchema = z.object({
+  datosCobro: z.string().trim().max(300).nullable().optional(),
+  codigo: codigoSchema.optional(),
+});
+
+/** Cambiar el código deja de atribuir el link anterior: las altas ya atribuidas no se tocan. */
+export async function actualizarAfiliado(deps: Deps, affiliateId: string, raw: unknown) {
+  const input = actualizarAfiliadoSchema.parse(raw);
+  try {
+    await deps.prisma.affiliate.update({
+      where: { id: affiliateId },
+      data: {
+        ...(input.datosCobro !== undefined && { datosCobro: input.datosCobro || null }),
+        ...(input.codigo && { codigo: input.codigo }),
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw conflict('Ese código ya lo usa otra persona');
+    throw err;
+  }
+}
+
+export async function codigoValido(deps: Deps, raw: string): Promise<boolean> {
+  const codigo = codigoSchema.safeParse(raw);
+  if (!codigo.success) return false;
+  return Boolean(await deps.prisma.affiliate.findUnique({ where: { codigo: codigo.data }, select: { id: true } }));
+}
+
+/** El programa de referidos del cliente: null si todavía no lo activó. */
+export async function afiliadoDeCliente(deps: Deps, clientUserId: string) {
+  const afiliado = await deps.prisma.affiliate.findUnique({ where: { clientUserId }, select: { id: true } });
+  return afiliado ? panelAfiliado(deps, afiliado.id) : null;
+}
+
+/**
+ * Activa el link de referidos de un cliente con su mismo nombre, email y contraseña.
+ * Si ya hay un afiliado con ese email no se vincula solo: el email del cliente puede no estar verificado.
+ */
+export async function activarAfiliadoCliente(deps: Deps, clientUserId: string, raw: unknown) {
+  z.object({ aceptaTerminos: registroAfiliadoSchema.shape.aceptaTerminos }).parse(raw);
+  const usuario = await deps.prisma.clientUser.findUniqueOrThrow({ where: { id: clientUserId }, include: { afiliado: true } });
+  if (usuario.afiliado) return panelAfiliado(deps, usuario.afiliado.id);
+  if (await deps.prisma.affiliate.findUnique({ where: { email: usuario.email }, select: { id: true } })) {
+    throw conflict('Ya tenés una cuenta de afiliado con este email. Ingresá desde el panel de afiliados.');
+  }
+  const afiliado = await deps.prisma.affiliate.create({
+    data: {
+      email: usuario.email,
+      nombre: usuario.nombre,
+      passwordHash: usuario.passwordHash,
+      codigo: await codigoDisponible(deps, usuario.nombre),
+      aceptaTerminos: deps.now(),
+      clientUserId,
+    },
   });
+  return panelAfiliado(deps, afiliado.id);
+}
+
+export async function actualizarAfiliadoCliente(deps: Deps, clientUserId: string, raw: unknown) {
+  const afiliado = await deps.prisma.affiliate.findUnique({ where: { clientUserId }, select: { id: true } });
+  if (!afiliado) throw conflict('Primero activá tu link de referidos');
+  await actualizarAfiliado(deps, afiliado.id, raw);
+  return panelAfiliado(deps, afiliado.id);
+}
+
+/**
+ * El cliente carga a mano el código de quien lo recomendó. Solo una vez y antes del primer pago,
+ * porque la comisión sale de ese pago.
+ */
+export async function cargarReferido(deps: Deps, tenantId: string, clientUserId: string, raw: unknown) {
+  const { codigo } = z.object({ codigo: codigoSchema }).parse(raw);
+  if (await deps.prisma.referral.findUnique({ where: { tenantId }, select: { id: true } })) {
+    throw conflict('Tu cuenta ya tiene un link de referido');
+  }
+  if (await deps.prisma.payment.count({ where: { tenantId } })) {
+    throw conflict('El link de referido se carga antes del primer pago');
+  }
+  const afiliado = await deps.prisma.affiliate.findUnique({ where: { codigo } });
+  if (!afiliado) throw new HttpError(400, 'No encontramos ese código de referido');
+  const usuario = await deps.prisma.clientUser.findUniqueOrThrow({ where: { id: clientUserId }, select: { email: true } });
+  if (afiliado.clientUserId === clientUserId || afiliado.email === usuario.email) {
+    throw new HttpError(400, 'No podés usar tu propio link de referido');
+  }
+  try {
+    await deps.prisma.referral.create({ data: { affiliateId: afiliado.id, tenantId } });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw conflict('Tu cuenta ya tiene un link de referido');
+    throw err;
+  }
 }
 
 export async function panelAfiliado(deps: Deps, affiliateId: string) {

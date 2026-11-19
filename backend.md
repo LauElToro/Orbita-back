@@ -176,6 +176,7 @@ Los períodos se calculan en la zona horaria de la ficha: el día reinicia a med
 - Cada hora: vencido pasa a `pendiente`. Con 7 días de atraso pasa a `impago` y la ficha se pausa con motivo `impago`. Registrar el pago la reactiva.
 - Activar a mano solo se permite con el pago al día.
 - Cambiar de plan o de medio limpia la suscripción de Mercado Pago guardada y cancela la anterior (`PUT /preapproval/:id`), para no cobrar dos veces ni con el importe viejo.
+- Cuando el cliente cambia de plan (`PATCH /cuenta/plan`) el plan nuevo queda en `planPendienteId`: se cobra su importe, pero módulos y topes siguen siendo los del plan vigente hasta que `registrarPago` acredita un pago por al menos ese importe. Elegir de nuevo el plan vigente descarta el cambio. El equipo, desde la ficha, sigue cambiando el plan al instante.
 ## Cuentas de los comercios
 - `POST /cuenta/registro`: negocio, rubro, nombre, email, contraseña (mínimo 8), plan (`mensajes`, `turnos` o `completo`), medio, `aceptaTerminos: true` y `aceptaPrivacidad: true`. Crea la ficha pausada con motivo `onboarding`, la suscripción `pendiente`, el usuario y las aceptaciones. El `clientId` sale del nombre del negocio. Límite de 5 por hora por IP.
 - Contraseñas con scrypt. JWT de cliente `{ sub, rol: 'cliente', tenantId }` por 7 días; el del equipo es `{ sub, rol: 'admin' }` por 12 horas. Cada lado rechaza el token del otro con `403`.
