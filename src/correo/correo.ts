@@ -1,3 +1,4 @@
+import { lookup as dnsLookup } from 'node:dns';
 import nodemailer from 'nodemailer';
 import type { Config } from '../config';
 
@@ -37,23 +38,29 @@ ${boton}
 }
 
 export function crearCorreo(config: Config): Correo {
-  if (!config.SMTP_USER || !config.SMTP_PASS) return { async enviar() {} };
+  const pass = config.SMTP_PASS.replace(/\s+/g, '');
+  const from = config.SMTP_FROM || (config.SMTP_USER ? `Orbita <${config.SMTP_USER}>` : '');
+  if (!from) return { async enviar() {} };
   const transport = nodemailer.createTransport({
     host: config.SMTP_HOST,
     port: config.SMTP_PORT,
     secure: config.SMTP_PORT === 465,
-    auth: { user: config.SMTP_USER, pass: config.SMTP_PASS.replace(/\s+/g, '') },
+    name: 'orbita-emp.com',
+    auth: pass && config.SMTP_USER ? { user: config.SMTP_USER, pass } : undefined,
+    // El relay de Google autoriza la IPv4 del servidor. La IPv6 no está habilitada.
+    lookup: (hostname: string, _options: object, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
+      dnsLookup(hostname, { family: 4 }, callback);
+    },
     connectionTimeout: 8_000,
     greetingTimeout: 8_000,
     socketTimeout: 12_000,
-  });
-  const from = config.SMTP_FROM || `Orbita <${config.SMTP_USER}>`;
+  } as unknown as Parameters<typeof nodemailer.createTransport>[0]);
   return {
     async enviar(mensaje) {
       await transport.sendMail({
         from,
         to: mensaje.para,
-        replyTo: config.SMTP_USER,
+        replyTo: config.SMTP_USER || undefined,
         subject: mensaje.asunto,
         text: mensaje.texto,
         html: mensaje.html,
