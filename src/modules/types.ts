@@ -13,6 +13,7 @@ export interface ResultadoModulo {
   texto: string;
   handoff?: boolean;
   imagen?: string;
+  herramientas?: { nombre: string; imagen: string }[];
 }
 
 export interface Modulo {

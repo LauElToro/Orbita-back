@@ -7,7 +7,7 @@ export const itemCatalogoSchema = z.object({
   nombre: z.string().trim().min(1).max(120),
   detalle: texto(400),
   categoria: texto(80),
-  imagen: z.string().trim().max(500).default(''),
+  imagen: z.string().trim().max(2000).default(''),
   precio: z.number().int().nonnegative(),
   precioEfectivo: z.number().int().nonnegative().optional(),
   stock: z.number().int().min(0).nullable().default(null),
@@ -37,6 +37,16 @@ export const perfilSchema = z.object({
     })
     .optional(),
   catalogo: z.array(itemCatalogoSchema).max(80).default([]),
+  documentos: z
+    .array(
+      z.object({
+        nombre: z.string().trim().min(1).max(160),
+        url: z.string().trim().max(2000).default(''),
+        texto: z.string().trim().min(1).max(20_000),
+      }),
+    )
+    .max(6)
+    .default([]),
 });
 
 export type Perfil = z.infer<typeof perfilSchema>;
@@ -100,6 +110,7 @@ export function compilarPrompt(perfil: Perfil, modulos: string[]): string {
     seccion('Qué hacemos', perfil.descripcion),
     seccion('Catálogo', catalogo),
     seccion('Productos, servicios y precios', perfil.productos),
+    seccion('Documentos', perfil.documentos.map((d) => `${d.nombre}\n${d.texto}`).join('\n\n')),
     seccion('Horarios de atención', perfil.horarios),
     seccion('Dónde estamos', perfil.ubicacion),
     seccion('Medios de pago y envíos', perfil.pagosEnvios),

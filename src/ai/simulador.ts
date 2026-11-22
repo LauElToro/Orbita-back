@@ -22,6 +22,7 @@ export interface ResultadoSimulacion {
   handoff: boolean;
   acciones: string[];
   imagen?: string;
+  herramientas?: { nombre: string; imagen: string }[];
 }
 
 /**
@@ -50,13 +51,20 @@ export async function simular(deps: Deps, tenant: TenantFull, raw: unknown): Pro
           handoff: true,
           acciones: ['Derivaría la conversación a una persona del local'],
           ...(directo.imagen ? { imagen: directo.imagen } : {}),
+          ...(directo.herramientas?.length ? { herramientas: directo.herramientas } : {}),
         };
       }
       const etiquetas = parsearEtiquetas(directo.texto);
       const acciones = tenant.modulos.includes('turnos')
         ? [...etiquetas.reservas.map((r) => `Reservaría un turno el ${r}`), ...etiquetas.cancelaciones.map((c) => `Cancelaría el turno ${c}`)]
         : [];
-      return { texto: limpiarFormato(etiquetas.limpio), handoff: false, acciones, ...(directo.imagen ? { imagen: directo.imagen } : {}) };
+      return {
+        texto: limpiarFormato(etiquetas.limpio),
+        handoff: false,
+        acciones,
+        ...(directo.imagen ? { imagen: directo.imagen } : {}),
+        ...(directo.herramientas?.length ? { herramientas: directo.herramientas } : {}),
+      };
     }
   }
   const { mensajes, modelo } = await armarContexto(

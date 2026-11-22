@@ -348,7 +348,7 @@ export const textosSchema = z
   .object({ espera: z.string(), tope: z.string(), handoff: z.string(), recordatorio: z.string() })
   .partial();
 
-export const promptSchema = z.object({ prompt: z.string().max(20_000) });
+export const promptSchema = z.object({ prompt: z.string().max(60_000) });
 
 export const canalesSchema = z.object({ canales: z.array(canalSchema).min(1) });
 

@@ -56,6 +56,7 @@ export interface MensajeCharla {
   rol: 'user' | 'assistant';
   texto: string;
   at: string;
+  herramientas?: { nombre: string; imagen: string }[];
 }
 
 export interface Charla {
@@ -122,10 +123,23 @@ function momentoDe(c: { historial?: unknown; updatedAt: Date }): string {
   return Number.isNaN(fecha.getTime()) ? c.updatedAt.toISOString() : fecha.toISOString();
 }
 
+function herramientasDe(raw: unknown): { nombre: string; imagen: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const nombre = (item as { nombre?: unknown }).nombre;
+    const imagen = (item as { imagen?: unknown }).imagen;
+    if (typeof imagen !== 'string' || !/^https:\/\//.test(imagen)) return [];
+    return [{ nombre: typeof nombre === 'string' ? nombre.slice(0, 120) : '', imagen }];
+  });
+}
+
 function mensajesDe(raw: unknown): MensajeCharla[] {
-  return leerHistorial(raw).flatMap((m) =>
-    (m.rol === 'user' || m.rol === 'assistant') && m.texto ? [{ rol: m.rol, texto: m.texto, at: m.at ?? '' }] : [],
-  );
+  return leerHistorial(raw).flatMap((m) => {
+    if ((m.rol !== 'user' && m.rol !== 'assistant') || !m.texto) return [];
+    const herramientas = herramientasDe(m.herramientas);
+    return [{ rol: m.rol, texto: m.texto, at: m.at ?? '', ...(herramientas.length ? { herramientas } : {}) }];
+  });
 }
 
 export function avisoDe(
@@ -200,6 +214,7 @@ export async function listarAvisos(deps: Deps, tenantId: string, q?: string): Pr
 /** La charla guardada de ese cliente, con el aviso de la ventana si sigue abierto. */
 export async function obtenerCharla(deps: Deps, tenantId: string, id: string): Promise<Charla> {
   const conv = await cargarCharla(deps, tenantId, id);
+  if (!esBandeja(conv.canal)) throw notFound('Conversación');
   const ahora = deps.now();
   const aviso = avisoDe(conv, ahora);
   return {

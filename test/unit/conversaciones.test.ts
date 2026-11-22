@@ -1,18 +1,16 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { responderDesdeDatos } from '../../src/ai/charla';
 import { pesos } from '../../src/ai/mediosdepago';
 import { compilarPrompt, perfilSchema, type ItemCatalogo, type Perfil } from '../../src/ai/perfil';
 import { MAX_HISTORIAL } from '../../src/ai/prompt';
 
-const HANDOFF = 'Lo comunico con una persona del local.';
-const AHORA = new Date('2026-11-22T15:00:00.000Z');
-const ZONA = 'America/Argentina/Buenos_Aires';
+export const HANDOFF = 'Lo comunico con una persona del local.';
+export const AHORA = new Date('2026-11-22T15:00:00.000Z');
+export const ZONA = 'America/Argentina/Buenos_Aires';
 const MED: ItemCatalogo['medios'] = ['efectivo', 'mercadopago', 'tarjeta', 'transferencia'];
 const JERGA = [/\bquerés\b/i, /\bpasás\b/i, /\bpedime\b/i, /\bmandame\b/i, /\bpor acá\b/i];
 
-const PLAN = {
+export const PLAN = {
   mensajes: ['faq', 'handoff'],
   turnos: ['faq', 'handoff', 'turnos'],
   completo: ['faq', 'handoff', 'turnos', 'recordatorios'],
@@ -21,7 +19,7 @@ const PLAN = {
 
 type PlanId = keyof typeof PLAN;
 
-interface Local {
+export interface Local {
   id: string;
   nombre: string;
   rubro: string;
@@ -83,7 +81,7 @@ function foto(local: string, nombre: string): string {
   return `https://imagenes.orbita.test/${local}/${slug}.jpg`;
 }
 
-function perfilDe(local: Local): Perfil {
+export function perfilDe(local: Local): Perfil {
   return perfilSchema.parse({
     descripcion: local.descripcion,
     horarios: local.horarios,
@@ -97,7 +95,7 @@ function perfilDe(local: Local): Perfil {
   });
 }
 
-function locales(): Local[] {
+export function locales(): Local[] {
   const base = (parcial: Omit<Local, 'derivar' | 'descripcion'> & { descripcion?: string }): Local => ({
     derivar: 'Reclamos, quejas y pedidos de factura.',
     descripcion: parcial.descripcion ?? `${parcial.nombre} atiende por WhatsApp con precios y stock cargados.`,
@@ -702,8 +700,6 @@ describe('charlas de comercios', () => {
 
   it('cada charla responde solo con los datos cargados', () => {
     const resultados = escenarios.map(correr);
-    fs.mkdirSync(path.resolve('e:/orbita/qa'), { recursive: true });
-    fs.writeFileSync(path.resolve('e:/orbita/qa/auditoria-charlas.html'), informe(resultados), 'utf8');
     const fallas = resultados.filter((r) => !r.ok).map((r) => `${r.escenario.id} ${r.escenario.titulo}: ${r.error}`);
     expect(fallas).toEqual([]);
   });

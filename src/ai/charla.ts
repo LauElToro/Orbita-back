@@ -8,10 +8,16 @@ export interface TurnoCharla {
   texto: string;
 }
 
+export interface HerramientaProducto {
+  nombre: string;
+  imagen: string;
+}
+
 export interface RespuestaDatos {
   texto: string;
   handoff: boolean;
   imagen?: string;
+  herramientas?: HerramientaProducto[];
 }
 
 export interface ConsultaDatos {
@@ -128,18 +134,18 @@ function unidad(it: ItemCatalogo, efectivo: boolean): number {
   return it.precio;
 }
 
-function ficha(it: ItemCatalogo, items: ItemCatalogo[], tono: Perfil['tono'], efectivo: boolean, cantidad: number | null, modo: string): { lineas: string[]; imagen?: string } {
-  if (it.stock === 0 && (modo === 'ficha' || modo === 'stock' || cantidad)) return { lineas: [sinStock(it, items)], imagen: it.imagen || undefined };
+function ficha(it: ItemCatalogo, items: ItemCatalogo[], tono: Perfil['tono'], efectivo: boolean, cantidad: number | null, modo: string): { nombre: string; lineas: string[]; imagen?: string } {
+  if (it.stock === 0 && (modo === 'ficha' || modo === 'stock' || cantidad)) return { nombre: it.nombre, lineas: [sinStock(it, items)], imagen: it.imagen || undefined };
   const lineas: string[] = [];
   if (modo === 'foto') {
     lineas.push(it.imagen ? `${it.nombre}.` : `No tengo una foto de ${it.nombre}.`);
     if (it.imagen) lineas.push(`Foto: ${it.imagen}`);
-    return { lineas, imagen: it.imagen || undefined };
+    return { nombre: it.nombre, lineas, imagen: it.imagen || undefined };
   }
   if (modo === 'stock') {
     if (it.stock == null) lineas.push(`No tengo el stock de ${it.nombre} cargado.`);
     else lineas.push(`Hay ${it.stock} unidades de ${it.nombre}.`);
-    return { lineas };
+    return { nombre: it.nombre, lineas };
   }
   if (modo === 'efectivo') {
     if (it.precioEfectivo != null && it.precioEfectivo !== it.precio) {
@@ -168,7 +174,7 @@ function ficha(it: ItemCatalogo, items: ItemCatalogo[], tono: Perfil['tono'], ef
       lineas.push(`El total de ${cantidad} ${it.nombre} ${como} es ${pesos(precio * cantidad)}.`);
     }
   }
-  return { lineas, imagen: modo === 'ficha' || modo === 'foto' ? it.imagen || undefined : undefined };
+  return { nombre: it.nombre, lineas, imagen: modo === 'ficha' || modo === 'foto' ? it.imagen || undefined : undefined };
 }
 
 function modoDe(p: string): string {
@@ -228,7 +234,20 @@ function turnoDe(texto: string, perfil: Perfil, modulos: string[], textoHandoff:
 }
 
 function queja(p: string): boolean {
-  return /reclamo|queja|horrible|pesim|estafa|indign|denunci|no funciona|nunca llego|intoxic|vencid|verguenza|me cag|estaf/.test(p) || /(llego|estaba|vino|quedo) fri/.test(p);
+  return /reclamo|queja|horrible|pesim|estafa|indign|denunci|no funciona|nunca llego|intoxic|vencid|verguenza|me cag|estaf|derretid|equivocad|crudo|cruda/.test(p) || /(llego|estaba|vino|quedo) fri/.test(p) || /\b(roto|rota)\b/.test(p);
+}
+
+function esSaludo(p: string): boolean {
+  const frases = ['buenas tardes', 'buenas noches', 'buenos dias', 'buen dia', 'que tal', 'buenas', 'hola', 'hey'];
+  let resto = ` ${p} `;
+  let hubo = false;
+  for (const frase of frases) {
+    const marca = ` ${frase} `;
+    if (!resto.includes(marca)) continue;
+    hubo = true;
+    resto = resto.split(marca).join(' ');
+  }
+  return hubo && resto.trim().length === 0;
 }
 
 /**
@@ -242,7 +261,13 @@ export function responderDesdeDatos(input: ConsultaDatos): RespuestaDatos | null
   const p = frase(input.texto);
   if (!p) return null;
   const tono = input.perfil.tono;
-  const listo = (texto: string, handoff = false, imagen?: string): RespuestaDatos => ({ texto, handoff, ...(imagen ? { imagen } : {}) });
+  const listo = (texto: string, handoff = false, herramientas: HerramientaProducto[] = [], comoImagen = true): RespuestaDatos => {
+    const fotos = herramientas.filter((h) => h.imagen);
+    if (!fotos.length) return { texto, handoff };
+    return { texto, handoff, herramientas: fotos, ...(comoImagen ? { imagen: fotos[0].imagen } : {}) };
+  };
+  const fotosDe = (bloques: { nombre: string; imagen?: string }[]): HerramientaProducto[] =>
+    bloques.flatMap((b) => (b.imagen ? [{ nombre: b.nombre, imagen: b.imagen }] : []));
 
   if (queja(p) || /\bfactura\b/.test(p) || p.includes('nota de credito')) return listo(input.textoHandoff, true);
   if (p.includes('hablar con') || p.includes('una persona') || p.includes('alguien del local') || /\b(asesor|humano|encargado|encargada)\b/.test(p)) {
@@ -255,7 +280,7 @@ export function responderDesdeDatos(input: ConsultaDatos): RespuestaDatos | null
   if (/\b(carta|menu)\b/.test(p) || p.includes('que tienen') || p.includes('que hay')) {
     const lineas = items.map((it) => `${it.nombre}: ${lineasPrecio(it)[0]}`);
     const pregunta = tono === 'divertido' ? 'Dígame cuál y le envío la foto. 🙌' : 'Indique un producto y le envío la foto.';
-    return listo(`${lineas.join('\n')}\n${pregunta}`);
+    return listo(`${lineas.join('\n')}\n${pregunta}`, false, fotosDe(items), false);
   }
 
   let sinNombres = ` ${p} `;
@@ -277,7 +302,7 @@ export function responderDesdeDatos(input: ConsultaDatos): RespuestaDatos | null
   const efectivo = pidioEfectivo(input.texto, historial);
   if (productos.length > 1 && modo === 'ficha') {
     const bloques = productos.map((it) => ficha(it, items, tono, efectivo, null, 'ficha'));
-    return listo(bloques.flatMap((b) => b.lineas).join('\n'), false, bloques.find((b) => b.imagen)?.imagen);
+    return listo(bloques.flatMap((b) => b.lineas).join('\n'), false, fotosDe(bloques));
   }
   if (producto && (productos.length || modo !== 'ficha' || cantidad)) {
     const pedido = medioPedido(p);
@@ -286,7 +311,7 @@ export function responderDesdeDatos(input: ConsultaDatos): RespuestaDatos | null
       return listo(`${producto.nombre} no admite pago con ${MEDIO_LABEL[pedido]}. Los medios disponibles son ${medios}.`);
     }
     const armado = ficha(producto, items, tono, efectivo, cantidad, productos.length ? modo : cantidad ? 'ficha' : modo);
-    return listo(armado.lineas.join('\n'), false, armado.imagen);
+    return listo(armado.lineas.join('\n'), false, fotosDe([armado]));
   }
 
   if (!productos.length && modo === 'medios') {
@@ -324,7 +349,7 @@ export function responderDesdeDatos(input: ConsultaDatos): RespuestaDatos | null
     return listo(lineas.join('\n'));
   }
 
-  if (['hola', 'buenas', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches', 'hey', 'que tal'].includes(p)) {
+  if (esSaludo(p)) {
     const saludo = tono === 'formal' ? 'Buen día' : 'Hola';
     const nombre = input.nombreCliente ? `, ${input.nombreCliente}` : '';
     const oferta = tono === 'divertido' ? 'Puedo informarle precios, fotos y medios de pago. 🙌' : 'Puedo informarle precios, fotos, stock y medios de pago.';

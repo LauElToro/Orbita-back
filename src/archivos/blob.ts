@@ -1,5 +1,6 @@
 import { createFolder, put } from '@vercel/blob';
 import { HttpError } from '../lib/errors';
+import { textoDeArchivo } from './texto';
 
 export const CARPETA_ORBITA = 'Orbita';
 
@@ -65,7 +66,8 @@ export async function asegurarCarpetaOrbita(token: string): Promise<void> {
 export async function guardarEnOrbita(token: string, nombre: string, archivo: string, carpeta?: string) {
   if (!token) throw new HttpError(503, 'El almacenamiento de archivos no está configurado');
   const { ruta, datos, tipo } = prepararArchivo(nombre, archivo, carpeta);
+  const texto = await textoDeArchivo(nombre, datos);
   await asegurarCarpetaOrbita(token);
   const blob = await put(ruta, datos, { access: 'public', token, contentType: tipo, addRandomSuffix: true });
-  return { url: blob.url, pathname: blob.pathname, tipo, nombre };
+  return { url: blob.url, pathname: blob.pathname, tipo, nombre, texto };
 }

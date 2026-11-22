@@ -4,6 +4,7 @@ export interface Intervencion {
   rol: 'user' | 'assistant';
   texto: string;
   at: string;
+  herramientas?: { nombre: string; imagen: string }[];
 }
 
 export const MAX_HISTORIAL = 10;

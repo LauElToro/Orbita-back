@@ -58,7 +58,7 @@ async function generar(deps: Deps, ctx: ModuloCtx, intentos = 2): Promise<Result
       timezone: ctx.tenant.timezone,
     });
     if (directo) {
-      let salida: ResultadoModulo = { texto: directo.texto, handoff: directo.handoff, imagen: directo.imagen };
+      let salida: ResultadoModulo = { texto: directo.texto, handoff: directo.handoff, imagen: directo.imagen, herramientas: directo.herramientas };
       for (const m of modulosActivos(ctx.tenant.modulos)) if (m.procesar) salida = await m.procesar(ctx, salida);
       return { ...salida, texto: limpiarFormato(salida.texto) };
     }
@@ -77,14 +77,21 @@ async function generar(deps: Deps, ctx: ModuloCtx, intentos = 2): Promise<Result
   throw ultimoError;
 }
 
-async function guardarHistorial(deps: Deps, tenantId: string, subscriberId: string, usuario: string, bot: string) {
+async function guardarHistorial(
+  deps: Deps,
+  tenantId: string,
+  subscriberId: string,
+  usuario: string,
+  bot: string,
+  herramientas?: { nombre: string; imagen: string }[],
+) {
   const where = { tenantId_subscriberId: { tenantId, subscriberId } };
   const previa = await deps.prisma.conversation.findUnique({ where });
   const at = deps.now().toISOString();
   const historial = agregarAlHistorial(
     leerHistorial(previa?.historial),
     { rol: 'user', texto: usuario, at },
-    { rol: 'assistant', texto: bot, at },
+    { rol: 'assistant', texto: bot, at, ...(herramientas?.length ? { herramientas } : {}) },
   ) as unknown as Prisma.InputJsonValue;
   await deps.prisma.conversation.upsert({
     where,
@@ -103,7 +110,7 @@ export async function responderConsulta(deps: Deps, tenant: TenantFull, consulta
     await sumarUso(deps, tenant);
     if (extra) await registrarExtra(deps, tenant);
     void avisarSiLlegoAlLimite(deps, tenant);
-    await guardarHistorial(deps, tenant.id, consulta.subscriberId, consulta.texto, salida.texto);
+    await guardarHistorial(deps, tenant.id, consulta.subscriberId, consulta.texto, salida.texto, salida.herramientas);
     return { texto: salida.texto, handoff: Boolean(salida.handoff), tope: extra, imagen: salida.imagen };
   } catch (err) {
     console.error(`generación ${consulta.messageId} falló`, err);
