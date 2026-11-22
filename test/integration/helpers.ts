@@ -8,6 +8,7 @@ import type { PagoMp, PaymentsGateway, SuscripcionMp } from '../../src/billing/m
 import { loadConfig } from '../../src/config';
 import { closeDeps, createDeps, type Deps } from '../../src/deps';
 import type { JobGeneracion } from '../../src/messaging/entrada';
+import type { CuentaRed, Red } from '../../src/messaging/redes';
 import { rebuildIndex } from '../../src/tenants/repo';
 
 export interface TestEnv {
@@ -16,8 +17,21 @@ export interface TestEnv {
   clock: { now: Date };
   ai: { chat: ReturnType<typeof vi.fn> };
   mensajeria: { enviar: ReturnType<typeof vi.fn> };
+  meta: {
+    intercambiarCodigo: ReturnType<typeof vi.fn>;
+    suscribirApp: ReturnType<typeof vi.fn>;
+    leerNumero: ReturnType<typeof vi.fn>;
+    registrarNumero: ReturnType<typeof vi.fn>;
+  };
+  agenda: { aplicar: ReturnType<typeof vi.fn> };
+  redes: {
+    listo: ReturnType<typeof vi.fn<(red: Red) => boolean>>;
+    url: ReturnType<typeof vi.fn<(red: Red, state: string) => string>>;
+    completar: ReturnType<typeof vi.fn<(red: Red, code: string) => Promise<CuentaRed>>>;
+  };
   mp: PaymentsGateway & {
     crearSuscripcion: ReturnType<typeof vi.fn>;
+    crearPreferencia: ReturnType<typeof vi.fn>;
     cancelarSuscripcion: ReturnType<typeof vi.fn>;
     obtenerPago: ReturnType<typeof vi.fn>;
     obtenerSuscripcion: ReturnType<typeof vi.fn>;
@@ -43,14 +57,28 @@ export async function createTestEnv(): Promise<TestEnv> {
     META_VERIFY_TOKEN: 'verificar-orbita',
     TIKTOK_APP_SECRET: 'tiktok-secret',
     PUBLIC_URL: 'https://orbita.test',
-    TRANSFER_ALIAS: 'orbita.test.alias',
+    META_APP_ID: 'app-id',
+    META_EMBEDDED_CONFIG_ID: 'cfg-id',
   });
   const clock = { now: new Date('2026-11-14T15:00:00Z') };
   const ai = { chat: vi.fn() };
   const mensajeria = { enviar: vi.fn().mockResolvedValue(undefined) };
+  const meta = {
+    intercambiarCodigo: vi.fn(),
+    suscribirApp: vi.fn(),
+    leerNumero: vi.fn(),
+    registrarNumero: vi.fn(),
+  };
+  const agenda = { aplicar: vi.fn().mockResolvedValue('evt-1') };
+  const redes = {
+    listo: vi.fn<(red: Red) => boolean>(() => true),
+    url: vi.fn<(red: Red, state: string) => string>((red, state) => `https://auth.test/${red}?state=${state}`),
+    completar: vi.fn<(red: Red, code: string) => Promise<CuentaRed>>(),
+  };
   const mp = {
     habilitado: true,
     crearSuscripcion: vi.fn(),
+    crearPreferencia: vi.fn(),
     cancelarSuscripcion: vi.fn().mockResolvedValue(undefined),
     obtenerPago: vi.fn<(tipo: string, id: string) => Promise<PagoMp | null>>(),
     obtenerSuscripcion: vi.fn<(id: string) => Promise<SuscripcionMp>>(),
@@ -61,6 +89,9 @@ export async function createTestEnv(): Promise<TestEnv> {
     prisma: new PrismaClient({ datasources: { db: { url: databaseUrl } } }),
     ai,
     mensajeria,
+    meta,
+    redes,
+    agenda,
     mercadopago: mp,
     now: () => clock.now,
   });
@@ -74,12 +105,15 @@ export async function createTestEnv(): Promise<TestEnv> {
     clock,
     ai,
     mensajeria,
+    meta,
+    agenda,
+    redes,
     mp,
     token: '',
     auth: () => ({ authorization: `Bearer ${env.token}` }),
     async reset() {
       await deps.prisma.$executeRawUnsafe(
-        'TRUNCATE "CorreoEnviado", "Commission", "Referral", "Affiliate", "LegalAcceptance", "ClientUser", "Ticket", "Turno", "Payment", "Subscription", "Conversation", "Usage", "Channel", "Tenant" CASCADE',
+        'TRUNCATE "PagoExtra", "CargoExtra", "Calendario", "CorreoEnviado", "Commission", "Referral", "Affiliate", "LegalAcceptance", "ClientUser", "Ticket", "Turno", "Payment", "Subscription", "Conversation", "Usage", "Channel", "Tenant" CASCADE',
       );
       await deps.colaGeneracion.obliterate({ force: true });
       await deps.redis.flushdb();
@@ -88,6 +122,17 @@ export async function createTestEnv(): Promise<TestEnv> {
       ai.chat.mockReset();
       mensajeria.enviar.mockReset();
       mensajeria.enviar.mockResolvedValue(undefined);
+      meta.intercambiarCodigo.mockReset();
+      meta.suscribirApp.mockReset();
+      meta.leerNumero.mockReset();
+      meta.registrarNumero.mockReset();
+      agenda.aplicar.mockReset();
+      agenda.aplicar.mockResolvedValue('evt-1');
+      redes.listo.mockReset();
+      redes.listo.mockReturnValue(true);
+      redes.url.mockReset();
+      redes.url.mockImplementation((red, state) => `https://auth.test/${red}?state=${state}`);
+      redes.completar.mockReset();
       mp.crearSuscripcion.mockReset();
       mp.cancelarSuscripcion.mockClear();
       mp.obtenerPago.mockReset();
@@ -117,7 +162,7 @@ export const altaBase = {
   clientId: 'pizzeria-norte',
   nombre: 'Pizzería Norte',
   planId: 'turnos',
-  medio: 'transferencia',
+  medio: 'mercadopago',
   canales: [{ tipo: 'whatsapp', endpointId: 'PN-NORTE', etiqueta: 'WhatsApp del local', token: 'whatsapp-secret-token' }],
   prompt: 'Vendemos pizzas. Abrimos de 19 a 24.',
 };

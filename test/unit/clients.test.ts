@@ -47,6 +47,28 @@ describe('CanalesClient', () => {
     expect(JSON.parse(init.body)).toMatchObject({ messaging_product: 'whatsapp', to: '5491100000000', text: { body: 'hola' } });
   });
 
+  it('WhatsApp envía la foto del producto con el texto como epígrafe', async () => {
+    const fetch = mockFetch({ messages: [{ id: 'wamid.2' }] });
+    await client.enviar({ canal: 'whatsapp', endpointId: 'PN1', token: 'tok', destino: '5491100000000' }, 'Milanesa napolitana.', 'https://imagenes.orbita.test/milanesa.jpg');
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.type).toBe('image');
+    expect(body.image).toEqual({ link: 'https://imagenes.orbita.test/milanesa.jpg', caption: 'Milanesa napolitana.' });
+  });
+
+  it('Instagram envía la foto y después el texto', async () => {
+    const fetch = mockFetch({ message_id: 'm' });
+    await client.enviar({ canal: 'instagram', endpointId: 'IG1', token: 'tok', destino: 'IGSID' }, 'Milanesa napolitana.', 'https://imagenes.orbita.test/milanesa.jpg');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).message.attachment).toEqual({ type: 'image', payload: { url: 'https://imagenes.orbita.test/milanesa.jpg' } });
+    expect(JSON.parse(fetch.mock.calls[1][1].body).message.text).toBe('Milanesa napolitana.');
+  });
+
+  it('TikTok incluye el enlace de la foto en el texto', async () => {
+    const fetch = mockFetch({ code: 0 });
+    await client.enviar({ canal: 'tiktok', endpointId: 'BIZ', token: 'tok', destino: 'CONV' }, 'Milanesa napolitana.', 'https://imagenes.orbita.test/milanesa.jpg');
+    expect(JSON.parse(fetch.mock.calls[0][1].body).text.body).toContain('https://imagenes.orbita.test/milanesa.jpg');
+  });
+
   it('Instagram responde al IGSID y parte los textos de más de 1000 bytes', async () => {
     const fetch = mockFetch({ message_id: 'm1' });
     await client.enviar({ canal: 'instagram', endpointId: 'IG1', token: 'tok', destino: 'IGSID' }, 'ñ'.repeat(600));
@@ -54,6 +76,9 @@ describe('CanalesClient', () => {
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://graph.ig.test/v26.0/IG1/messages');
     expect(JSON.parse(init.body).recipient).toEqual({ id: 'IGSID' });
+    const pagina = mockFetch({ message_id: 'm2' });
+    await client.enviar({ canal: 'instagram', endpointId: 'IG1', token: 'page', destino: 'IGSID', apiBase: 'https://graph.facebook.com/' }, 'hola');
+    expect(pagina.mock.calls[0][0]).toBe('https://graph.facebook.com/v26.0/IG1/messages');
   });
 
   it('TikTok usa Access-Token y la conversación, y falla si code no es 0', async () => {

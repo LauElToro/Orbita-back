@@ -1,4 +1,4 @@
-import { Prisma, type Plan } from '@prisma/client';
+import { Prisma, type Plan, type VerificacionWhatsapp } from '@prisma/client';
 import { z } from 'zod';
 import type { Deps } from '../deps';
 import { cancelarSuscripcionVieja } from '../billing/mercadopago';
@@ -22,23 +22,43 @@ export const canalSchema = z.object({
 
 type CanalInput = z.infer<typeof canalSchema>;
 
-function canalesParaGuardar(deps: Deps, canales: CanalInput[], previos: { tipo: string; endpointId: string; tokenEnc: string | null }[] = []) {
-  return canales.map(({ token, ...c }) => ({
-    ...c,
-    tokenEnc: token
-      ? encrypt(token, deps.config.ENCRYPTION_KEY)
-      : (previos.find((p) => p.endpointId === c.endpointId && p.tipo === c.tipo)?.tokenEnc ?? null),
-  }));
+type CanalPrevio = {
+  tipo: string;
+  endpointId: string;
+  tokenEnc: string | null;
+  wabaId: string | null;
+  verificacion: VerificacionWhatsapp | null;
+  verificacionDetalle: string | null;
+  displayPhone: string | null;
+  apiBase: string | null;
+};
+
+function canalesParaGuardar(deps: Deps, canales: CanalInput[], previos: CanalPrevio[] = []) {
+  return canales.map(({ token, ...c }) => {
+    const previo = previos.find((p) => p.endpointId === c.endpointId && p.tipo === c.tipo);
+    return {
+      ...c,
+      tokenEnc: token ? encrypt(token, deps.config.ENCRYPTION_KEY) : (previo?.tokenEnc ?? null),
+      wabaId: previo?.wabaId ?? null,
+      verificacion: previo?.verificacion ?? null,
+      verificacionDetalle: previo?.verificacionDetalle ?? null,
+      displayPhone: previo?.displayPhone ?? null,
+      apiBase: previo?.apiBase ?? null,
+    };
+  });
 }
 
 /** Canales para mostrar: el token nunca sale, solo si está cargado y sus últimos 4 caracteres. */
 export function canalesDto(deps: Deps, canales: TenantFull['canales']) {
-  return canales.map(({ tipo, endpointId, etiqueta, tokenEnc }) => ({
+  return canales.map(({ tipo, endpointId, etiqueta, tokenEnc, verificacion, verificacionDetalle, displayPhone }) => ({
     tipo,
     endpointId,
     etiqueta,
     conectado: Boolean(tokenEnc),
     tokenMask: tokenMaskDe(deps, tokenEnc),
+    verificacion,
+    verificacionDetalle,
+    displayPhone,
   }));
 }
 
@@ -55,7 +75,7 @@ export const altaSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9-]{1,48}$/, 'Usar minúsculas, números y guiones'),
   nombre: z.string().trim().min(1),
   planId: z.enum(PLAN_IDS),
-  medio: z.enum(['mercadopago', 'transferencia']),
+  medio: z.literal('mercadopago'),
   canales: z.array(canalSchema).min(1),
   prompt: z.string().default(''),
   emailContacto: z.string().email().optional(),
@@ -83,7 +103,7 @@ export const patchSchema = z.object({
   emailContacto: z.string().email().nullable().optional(),
   canales: z.array(canalSchema).min(1).optional(),
   planId: z.enum(PLAN_IDS).optional(),
-  medio: z.enum(['mercadopago', 'transferencia']).optional(),
+  medio: z.literal('mercadopago').optional(),
   precioPersonalizado: z.number().int().positive().optional(),
   modulos: z.array(z.enum(MODULOS_VALIDOS as [string, ...string[]])).optional(),
   topes: topesSchema.optional(),
@@ -252,7 +272,7 @@ export function planACobrar(tenant: TenantFull): Plan {
 }
 
 export function importeDe(tenant: TenantFull): number {
-  return precioDe(planACobrar(tenant), tenant.subscription?.medio ?? 'transferencia', tenant.precioPersonalizado);
+  return precioDe(planACobrar(tenant), tenant.precioPersonalizado);
 }
 
 /** Un token nunca sale completo. `null` si todavía no se cargó. */
@@ -267,8 +287,10 @@ export function tokenMaskDe(deps: Deps, tokenEnc: string | null): string | null 
 
 /** Ficha para el panel del equipo. */
 export function fichaDto(deps: Deps, tenant: TenantFull) {
+  const { calendario, ...resto } = tenant;
   return {
-    ...tenant,
+    ...resto,
+    calendario: { conectado: Boolean(calendario), email: calendario?.email ?? null },
     canales: canalesDto(deps, tenant.canales),
     mensajes: leerMensajes(tenant.mensajes),
     importe: importeDe(tenant),

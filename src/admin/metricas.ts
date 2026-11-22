@@ -34,7 +34,7 @@ export async function calcularMetricas(deps: Deps) {
   const enOnboarding = tenants.filter((t) => t.pausaMotivo === 'onboarding');
   const operativos = tenants.filter((t) => t.pausaMotivo !== 'onboarding');
   const importe = (t: (typeof tenants)[number]) =>
-    precioDe(t.plan, t.subscription?.medio ?? 'transferencia', t.precioPersonalizado);
+    precioDe(t.plan, t.precioPersonalizado);
   const pagando = operativos.filter((t) => t.subscription?.estadoPago === 'al_dia');
   const mrr = pagando.reduce((s, t) => s + importe(t), 0);
 

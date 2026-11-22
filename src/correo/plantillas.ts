@@ -229,7 +229,7 @@ export function mensajeLimite(
       titulo: 'Usaste el 80% de tus respuestas',
       parrafos: [
         `Hola ${para.nombre}, la IA de ${negocio} viene trabajando mucho este mes.`,
-        'Si llega al tope antes de que se renueve el contador, deja de contestar sola hasta esa fecha.',
+        'Si pasa el cupo, la IA sigue contestando y cada respuesta extra se cobra aparte, más cara que el abono. Conviene subir de plan si pasa seguido.',
       ],
       progreso: pct,
       datos,
@@ -240,13 +240,15 @@ export function mensajeLimite(
   return plantillaOrbita({
     para: para.email,
     asunto: `${negocio} llegó al tope de respuestas`,
-    previa: `La IA vuelve a contestar el ${fechaDeClave(reinicia)}.`,
+    previa: 'La IA sigue contestando. Cada respuesta extra se cobra aparte.',
     etiqueta: 'Tope alcanzado',
     tono: 'rojo',
     titulo: 'Llegaste al tope de respuestas',
     parrafos: [
-      `Hola ${para.nombre}, la IA de ${negocio} usó todas las respuestas de este período.`,
-      'Hasta que se renueve el contador, tus clientes reciben el mensaje de tope y la charla queda para que la atiendas vos.',
+      `Hola ${para.nombre}, la IA de ${negocio} usó todas las respuestas incluidas de este período.`,
+      'Sigue contestando. Cada respuesta por encima del cupo se cobra aparte, a un precio más alto que el del abono, para que convenga pasar de plan. El contador se renueva el ' +
+        fechaDeClave(reinicia) +
+        '.',
     ],
     progreso: 100,
     datos,
@@ -265,7 +267,7 @@ const IDEAS: { titulo: string; texto: string }[] = [
   { titulo: 'Adelantate a la temporada', texto: 'Si tu rubro tiene temporadas, actualizá el texto de la IA al empezar cada una. No hace falta esperar a que pregunten.' },
   { titulo: 'Mirá la agenda a la mañana', texto: 'Un turno que la IA confirmó a las 23 vale igual que uno tomado en el mostrador. Arrancá el día revisando la agenda.' },
   { titulo: 'Revisá tus conexiones', texto: 'Si un canal se desconecta, la IA de ese canal deja de contestar. En Conexión ves cuáles están activos.' },
-  { titulo: 'Vigilá el consumo', texto: 'El tope de respuestas es mensual. Si un mes viene cargado, conviene verlo antes de que la IA se detenga.' },
+  { titulo: 'Vigilá el consumo', texto: 'El cupo de respuestas es mensual. Si se pasa, cada mensaje extra se cobra aparte y sale más caro que subir de plan.' },
   { titulo: 'Dale tu tono', texto: 'Contale a la IA cómo querés que salude y qué no debe prometer. El tono se nota desde la primera respuesta.' },
 ];
 

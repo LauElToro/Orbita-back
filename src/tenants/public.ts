@@ -40,14 +40,11 @@ export function registerPublicRoutes(app: FastifyInstance, deps: Deps): void {
       estado: tenant.estado,
       uso: { mes: uso.mes, tope: tenant.topeMes, reinicia: uso.periodos.reinicio.mes },
       diasGracia: DIAS_GRACIA,
-      mercadopago:
-        sub.medio === 'mercadopago'
-          ? { initPoint: sub.mpInitPoint, requiereEmail: !tenant.emailContacto, habilitado: deps.mercadopago.habilitado }
-          : null,
-      transferencia:
-        sub.medio === 'transferencia'
-          ? { alias: deps.config.TRANSFER_ALIAS, importe, concepto: tenant.id }
-          : null,
+      mercadopago: {
+        initPoint: sub.mpInitPoint,
+        requiereEmail: !tenant.emailContacto,
+        habilitado: deps.mercadopago.habilitado,
+      },
     };
   });
 }

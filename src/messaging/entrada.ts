@@ -3,6 +3,7 @@ import type { Deps } from '../deps';
 import { keys } from '../lib/keys';
 import { getTenant, resolveEndpoint } from '../tenants/repo';
 import type { Canal } from './canales';
+import { datosVentana } from './ventanas';
 import type { Entrante } from './webhooks';
 
 export interface JobGeneracion {
@@ -35,7 +36,14 @@ export async function recibirMensaje(deps: Deps, e: Entrante): Promise<Resultado
   if (!nuevo) return { estado: 'duplicado' };
 
   const where = { tenantId_subscriberId: { tenantId, subscriberId: e.subscriberId } };
-  const contacto = { canal: e.canal, endpointId: e.endpointId, destino: e.destino, ...(e.nombre ? { nombre: e.nombre } : {}) };
+  const previa = await deps.prisma.conversation.findUnique({ where });
+  const contacto = {
+    canal: e.canal,
+    endpointId: e.endpointId,
+    destino: e.destino,
+    ...(e.nombre ? { nombre: e.nombre } : {}),
+    ...datosVentana(e.canal, previa, deps.now()),
+  };
   const conversacion = await deps.prisma.conversation.upsert({
     where,
     create: { tenantId, subscriberId: e.subscriberId, historial: [], ...contacto },

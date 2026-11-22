@@ -129,7 +129,7 @@ export async function mensajeWeb(deps: Deps, clave: string, origin: string | und
     if (r.handoff && input.contacto) {
       await avisarDerivacion(deps, tenant, 'la web', nombre, input.texto, `Dejó este contacto: ${input.contacto}.`);
     }
-    return { ok: true, estado: r.tope ? ('tope' as const) : ('respondido' as const), messageId, texto: r.texto, handoff: r.handoff };
+    return { ok: true, estado: 'respondido' as const, extra: r.tope, messageId, texto: r.texto, handoff: r.handoff };
   });
 }
 

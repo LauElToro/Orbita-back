@@ -35,8 +35,9 @@ describe('perfil del negocio', () => {
     const prompt = compilarPrompt(base, ['faq', 'handoff']);
     expect(prompt).toContain('### Qué hacemos\nPizzería familiar en Palermo.');
     expect(prompt).toContain('- ¿Hacen delivery?\n  Sí, hasta 3 km.');
-    expect(prompt).toContain('tratando de usted');
+    expect(prompt).toContain('de usted');
     expect(prompt).not.toContain('### Horarios de atención');
+    expect(compilarPrompt({ ...base, derivar: 'Reclamos y facturas' }, ['faq'])).toContain('### Cuándo derivar automáticamente\nReclamos y facturas');
     expect(prompt).not.toContain('### Turnos');
   });
 

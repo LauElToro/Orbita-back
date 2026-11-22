@@ -4,7 +4,9 @@ import { pideHandoff } from '../modules/handoff';
 import { parsearEtiquetas } from '../modules/turnos';
 import { leerMensajes } from '../tenants/defaults';
 import type { TenantFull } from '../tenants/repo';
+import { responderDesdeDatos } from './charla';
 import { armarContexto } from './contexto';
+import { perfilSchema } from './perfil';
 import { limpiarFormato } from './prompt';
 
 export const simulacionSchema = z.object({
@@ -19,6 +21,7 @@ export interface ResultadoSimulacion {
   texto: string;
   handoff: boolean;
   acciones: string[];
+  imagen?: string;
 }
 
 /**
@@ -27,6 +30,35 @@ export interface ResultadoSimulacion {
  */
 export async function simular(deps: Deps, tenant: TenantFull, raw: unknown): Promise<ResultadoSimulacion> {
   const { texto, historial } = simulacionSchema.parse(raw);
+  const perfil = perfilSchema.safeParse(tenant.perfil);
+  if (perfil.success && perfil.data.catalogo.length > 0) {
+    const directo = responderDesdeDatos({
+      nombreNegocio: tenant.nombre,
+      perfil: perfil.data,
+      modulos: tenant.modulos,
+      nombreCliente: '',
+      texto,
+      historial,
+      textoHandoff: leerMensajes(tenant.mensajes).handoff,
+      ahora: deps.now(),
+      timezone: tenant.timezone,
+    });
+    if (directo) {
+      if (directo.handoff) {
+        return {
+          texto: directo.texto,
+          handoff: true,
+          acciones: ['Derivaría la conversación a una persona del local'],
+          ...(directo.imagen ? { imagen: directo.imagen } : {}),
+        };
+      }
+      const etiquetas = parsearEtiquetas(directo.texto);
+      const acciones = tenant.modulos.includes('turnos')
+        ? [...etiquetas.reservas.map((r) => `Reservaría un turno el ${r}`), ...etiquetas.cancelaciones.map((c) => `Cancelaría el turno ${c}`)]
+        : [];
+      return { texto: limpiarFormato(etiquetas.limpio), handoff: false, acciones, ...(directo.imagen ? { imagen: directo.imagen } : {}) };
+    }
+  }
   const { mensajes, modelo } = await armarContexto(
     deps,
     { deps, tenant, subscriberId: '__simulador__', nombre: '', textoUsuario: texto },

@@ -8,10 +8,12 @@ export interface Destino {
   endpointId: string;
   token: string;
   destino: string;
+  /** Host de Graph. Vacío usa el de Instagram Login. */
+  apiBase?: string | null;
 }
 
 export interface MessengerClient {
-  enviar(d: Destino, texto: string): Promise<void>;
+  enviar(d: Destino, texto: string, imagen?: string): Promise<void>;
 }
 
 export interface CanalesConfig {
@@ -58,9 +60,33 @@ export class CanalesClient implements MessengerClient {
     private readonly timeoutMs = 10_000,
   ) {}
 
-  async enviar(d: Destino, texto: string): Promise<void> {
+  async enviar(d: Destino, texto: string, imagen?: string): Promise<void> {
+    const bearer = { Authorization: `Bearer ${d.token}` };
+    if (imagen && d.canal === 'whatsapp') {
+      const caption = [...texto].slice(0, 1024).join('');
+      await this.post('WhatsApp', `${this.cfg.metaGraphUrl}/${this.cfg.metaVersion}/${d.endpointId}/messages`, bearer, {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: d.destino,
+        type: 'image',
+        image: { link: imagen, ...(caption ? { caption } : {}) },
+      });
+      const resto = [...texto].slice(1024).join('').trim();
+      if (resto) await this.enviar(d, resto);
+      return;
+    }
+    if (imagen && d.canal === 'instagram') {
+      const host = (d.apiBase || this.cfg.instagramGraphUrl).replace(/\/$/, '');
+      await this.post('Instagram', `${host}/${this.cfg.metaVersion}/${d.endpointId}/messages`, bearer, {
+        recipient: { id: d.destino },
+        message: { attachment: { type: 'image', payload: { url: imagen } } },
+      });
+      if (texto.trim()) await this.enviar(d, texto);
+      return;
+    }
+    const cuerpo = imagen ? `${texto}\n${imagen}` : texto;
     const { max, bytes } = LIMITE[d.canal];
-    for (const parte of partirTexto(texto, max, bytes)) await this.enviarUno(d, parte);
+    for (const parte of partirTexto(cuerpo, max, bytes)) await this.enviarUno(d, parte);
   }
 
   private async enviarUno(d: Destino, texto: string): Promise<void> {
@@ -76,7 +102,8 @@ export class CanalesClient implements MessengerClient {
       return;
     }
     if (d.canal === 'instagram') {
-      await this.post('Instagram', `${this.cfg.instagramGraphUrl}/${this.cfg.metaVersion}/${d.endpointId}/messages`, bearer, {
+      const host = (d.apiBase || this.cfg.instagramGraphUrl).replace(/\/$/, '');
+      await this.post('Instagram', `${host}/${this.cfg.metaVersion}/${d.endpointId}/messages`, bearer, {
         recipient: { id: d.destino },
         message: { text: texto },
       });

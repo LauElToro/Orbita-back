@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { config as cargarDotenv } from 'dotenv';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -17,12 +20,14 @@ const schema = z.object({
   MODELO_CAPAZ: z.string().default('nvidia/nemotron-3-ultra-550b-a55b:free'),
   MP_ACCESS_TOKEN: z.string().default(''),
   MP_WEBHOOK_SECRET: z.string().default(''),
-  TRANSFER_ALIAS: z.string().default('orbita.alias'),
+  META_APP_ID: z.string().default(''),
+  META_EMBEDDED_CONFIG_ID: z.string().default(''),
   META_APP_SECRET: z.string().default(''),
   META_VERIFY_TOKEN: z.string().default(''),
   META_API_VERSION: z.string().default('v26.0'),
   META_GRAPH_URL: z.string().default('https://graph.facebook.com'),
   INSTAGRAM_GRAPH_URL: z.string().default('https://graph.instagram.com'),
+  TIKTOK_APP_ID: z.string().default(''),
   TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_API_URL: z.string().default('https://business-api.tiktok.com'),
   HANDOFF_HORAS: z.coerce.number().min(0).default(12),
@@ -34,10 +39,18 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   GOOGLE_REDIRECT_URI: z.string().default(''),
+  BLOB_READ_WRITE_TOKEN: z.string().default(''),
 });
 
 export type Config = z.infer<typeof schema>;
 
+function cargarEnvLocal(): void {
+  for (const archivo of [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../.env')]) {
+    if (existsSync(archivo)) cargarDotenv({ path: archivo });
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  if (env === process.env) cargarEnvLocal();
   return schema.parse(env);
 }

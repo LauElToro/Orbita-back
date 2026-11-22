@@ -1,6 +1,14 @@
 import { createHmac } from 'node:crypto';
 import { safeEqual } from '../lib/crypto';
 
+export interface PreferenciaInput {
+  titulo: string;
+  externalReference: string;
+  importe: number;
+  payerEmail?: string;
+  backUrl: string;
+}
+
 export interface PreapprovalInput {
   reason: string;
   externalReference: string;
@@ -32,6 +40,7 @@ export const ESTADOS_REVERTIDOS = new Set(['refunded', 'charged_back', 'cancelle
 export interface PaymentsGateway {
   readonly habilitado: boolean;
   crearSuscripcion(input: PreapprovalInput): Promise<{ id: string; initPoint: string }>;
+  crearPreferencia(input: PreferenciaInput): Promise<{ id: string; initPoint: string }>;
   cancelarSuscripcion(id: string): Promise<void>;
   obtenerPago(tipo: string, id: string): Promise<PagoMp | null>;
   obtenerSuscripcion(id: string): Promise<SuscripcionMp>;
@@ -78,6 +87,21 @@ export class MercadoPagoClient implements PaymentsGateway {
     const res = await this.request<{ id: string; init_point: string }>('/preapproval', {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+    return { id: res.id, initPoint: res.init_point };
+  }
+
+  /** Cobro único, aparte del abono: los mensajes que superan el cupo. */
+  async crearPreferencia(input: PreferenciaInput) {
+    const res = await this.request<{ id: string; init_point: string }>('/checkout/preferences', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{ title: input.titulo, quantity: 1, unit_price: input.importe, currency_id: 'ARS' }],
+        external_reference: input.externalReference,
+        ...(input.payerEmail ? { payer: { email: input.payerEmail } } : {}),
+        back_urls: { success: input.backUrl, pending: input.backUrl, failure: input.backUrl },
+        auto_return: 'approved',
+      }),
     });
     return { id: res.id, initPoint: res.init_point };
   }

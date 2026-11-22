@@ -4,7 +4,10 @@ import Redis from 'ioredis';
 import type { Config } from './config';
 import { OpenRouterClient, type AiClient } from './ai/openrouter';
 import { CanalesClient, type MessengerClient } from './messaging/canales';
+import { MetaGraphClient, type MetaGraph } from './messaging/meta';
 import { MercadoPagoClient, type PaymentsGateway } from './billing/mercadopago';
+import { GoogleAgenda, type AgendaExterna } from './modules/turnos/calendario';
+import { RedesClient, type RedesAuth } from './messaging/redes';
 import { crearCorreo, type Correo } from './correo/correo';
 import { QUEUE_GENERACION, QUEUE_TAREAS } from './lib/keys';
 
@@ -16,6 +19,9 @@ export interface Deps {
   colaTareas: Queue;
   ai: AiClient;
   mensajeria: MessengerClient;
+  meta: MetaGraph;
+  redes: RedesAuth;
+  agenda: AgendaExterna;
   mercadopago: PaymentsGateway;
   correo: Correo;
   now: () => Date;
@@ -43,6 +49,9 @@ export function createDeps(config: Config, overrides: Partial<Deps> = {}): Deps 
         metaVersion: config.META_API_VERSION,
         tiktokUrl: config.TIKTOK_API_URL,
       }),
+    meta: overrides.meta ?? new MetaGraphClient(config),
+    redes: overrides.redes ?? new RedesClient(config),
+    agenda: overrides.agenda ?? new GoogleAgenda(config),
     mercadopago: overrides.mercadopago ?? new MercadoPagoClient(config.MP_ACCESS_TOKEN, config.MP_WEBHOOK_SECRET),
     correo: overrides.correo ?? crearCorreo(config),
     now: overrides.now ?? (() => new Date()),

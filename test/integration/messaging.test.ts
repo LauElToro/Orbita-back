@@ -112,7 +112,7 @@ describe('webhook de TikTok', () => {
     env.ai.chat.mockResolvedValue('Sí, enviamos a todo el país.');
     await procesarMensaje(env.deps, job);
     expect(env.mensajeria.enviar).toHaveBeenCalledWith(
-      { canal: 'tiktok', endpointId: 'BIZ-NORTE', destino: 'CONV-1', token: 'tiktok-access-token' },
+      { canal: 'tiktok', endpointId: 'BIZ-NORTE', destino: 'CONV-1', token: 'tiktok-access-token', apiBase: null },
       'Sí, enviamos a todo el país.',
     );
   });
@@ -126,7 +126,7 @@ describe('worker', () => {
 
     expect(r).toMatchObject({ estado: 'enviado', texto: '¡Sí! Tenemos mesa el sábado.', handoff: false });
     expect(env.mensajeria.enviar).toHaveBeenCalledWith(
-      { canal: 'whatsapp', endpointId: 'PN-NORTE', destino: '5491100000999', token: 'whatsapp-secret-token' },
+      { canal: 'whatsapp', endpointId: 'PN-NORTE', destino: '5491100000999', token: 'whatsapp-secret-token', apiBase: null },
       '¡Sí! Tenemos mesa el sábado.',
     );
     const [modelo, msgs] = env.ai.chat.mock.calls[0];
@@ -164,7 +164,7 @@ describe('worker', () => {
     env.ai.chat.mockRejectedValue(new Error('caído'));
     const job = await recibir();
     const r = await procesarMensaje(env.deps, job!);
-    expect(r).toMatchObject({ estado: 'enviado', texto: 'Te paso con alguien del local.', handoff: true });
+    expect(r).toMatchObject({ estado: 'enviado', texto: 'Lo comunico con una persona del local.', handoff: true });
     expect(env.ai.chat).toHaveBeenCalledTimes(2);
     expect(await env.deps.prisma.usage.count()).toBe(0);
 
@@ -176,16 +176,20 @@ describe('worker', () => {
   it('el modelo puede pedir handoff con la etiqueta', async () => {
     env.ai.chat.mockResolvedValue('[HANDOFF]');
     const job = await recibir('quiero hablar con alguien');
-    expect(await procesarMensaje(env.deps, job!)).toMatchObject({ texto: 'Te paso con alguien del local.', handoff: true });
+    expect(await procesarMensaje(env.deps, job!)).toMatchObject({ texto: 'Lo comunico con una persona del local.', handoff: true });
   });
 
-  it('el worker vuelve a leer estado y topes', async () => {
+  it('por encima del cupo sigue contestando y suma un cargo distinto del abono', async () => {
+    env.ai.chat.mockResolvedValue('Sigo acá');
     const job = await recibir();
     await env.deps.prisma.tenant.update({ where: { id: 'pizzeria-norte' }, data: { topeMes: 0 } });
-    expect(await procesarMensaje(env.deps, job!)).toMatchObject({ texto: 'En este momento te deriva una persona del local.', handoff: true });
+    expect(await procesarMensaje(env.deps, job!)).toMatchObject({ texto: 'Sigo acá', handoff: false });
+    expect(env.ai.chat).toHaveBeenCalled();
+    const cargo = await env.deps.prisma.cargoExtra.findFirstOrThrow();
+    expect(cargo).toMatchObject({ cantidad: 1, precioUnitario: 40 });
+    expect(await env.deps.prisma.payment.count()).toBe(0);
     await env.deps.prisma.tenant.update({ where: { id: 'pizzeria-norte' }, data: { estado: 'pausado' } });
     expect((await procesarMensaje(env.deps, job!)).estado).toBe('ignorado');
-    expect(env.ai.chat).not.toHaveBeenCalled();
   });
 
   it('el módulo turnos reserva y cancela', async () => {

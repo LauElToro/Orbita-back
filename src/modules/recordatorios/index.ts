@@ -1,6 +1,7 @@
 import type { Deps } from '../../deps';
 import { addDays, fmt, localParts } from '../../lib/dates';
 import { destinoDe } from '../../messaging/destino';
+import { contarRespuestaSaliente } from '../../messaging/ventanas';
 import { leerMensajes } from '../../tenants/defaults';
 import type { Modulo } from '../types';
 
@@ -67,6 +68,7 @@ export async function enviarRecordatorios(deps: Deps): Promise<number> {
       try {
         await deps.mensajeria.enviar(destino, textoRecordatorio(mensajes.recordatorio, hora));
         await deps.prisma.turno.update({ where: { id: turno.id }, data: { recordatorioEnviado: true } });
+        await contarRespuestaSaliente(deps, tenant.id, turno.subscriberId, destino.canal);
         enviados++;
       } catch (err) {
         console.error(`recordatorio ${turno.id} falló`, err);

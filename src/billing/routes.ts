@@ -6,6 +6,7 @@ import { rateLimit } from '../lib/rateLimit';
 import { tenantInclude } from '../tenants/repo';
 import { anularComisionDePago } from '../afiliados/service';
 import { ESTADOS_REVERTIDOS } from './mercadopago';
+import { acreditarExtra } from '../usage/usage';
 import { actualizarEstadoSuscripcion, iniciarSuscripcionMp, registrarPago } from './service';
 
 const notificacionSchema = z.object({
@@ -31,6 +32,10 @@ export function registerBillingRoutes(app: FastifyInstance, deps: Deps): void {
 
     const pago = await deps.mercadopago.obtenerPago(tipo, dataId);
     if (!pago) return { ok: true };
+    if (pago.externalReference?.startsWith('extra:')) {
+      if (pago.aprobado) await acreditarExtra(deps, pago.externalReference, pago);
+      return { ok: true };
+    }
     if (!pago.aprobado) {
       if (pago.estado && ESTADOS_REVERTIDOS.has(pago.estado)) await anularComisionDePago(deps, `mp:${pago.id}`);
       return { ok: true };

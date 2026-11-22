@@ -18,5 +18,6 @@ export function destinoDe(
     endpointId: conv.endpointId,
     destino: conv.destino,
     token: decrypt(canal.tokenEnc, deps.config.ENCRYPTION_KEY),
+    apiBase: canal.apiBase,
   };
 }

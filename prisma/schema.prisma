@@ -17,6 +17,14 @@ enum PausaMotivo {
   manual
   impago
   onboarding
+  baja
+}
+
+enum VerificacionWhatsapp {
+  pendiente
+  en_revision
+  verificado
+  rechazado
 }
 
 enum TicketTipo {
@@ -33,7 +41,6 @@ enum CanalTipo {
 
 enum MedioPago {
   mercadopago
-  transferencia
 }
 
 enum EstadoPago {
@@ -67,6 +74,7 @@ model Plan {
   nombre              String
   precioTransferencia Int
   precioMercadoPago   Int
+  precioMensajeExtra  Int      @default(45)
   topeDia             Int
   topeSemana          Int
   topeMes             Int
@@ -122,6 +130,8 @@ model Tenant {
   referido            Referral?
   comision            Commission?
   correos             CorreoEnviado[]
+  calendario          Calendario?
+  cargos              CargoExtra[]
 }
 
 model DemoFuente {
@@ -185,8 +195,14 @@ model Channel {
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tipo       CanalTipo
   endpointId String    @unique
-  etiqueta   String
-  tokenEnc   String?
+  etiqueta              String
+  tokenEnc              String?
+  wabaId                String?
+  verificacion          VerificacionWhatsapp?
+  verificacionDetalle   String?
+  displayPhone          String?
+  /// Host de Graph cuando el token no es el de Instagram Login (por ejemplo, el de una página de Facebook).
+  apiBase               String?
 }
 
 model Usage {
@@ -201,15 +217,20 @@ model Usage {
 
 model Conversation {
   id           String   @id @default(cuid())
+  /// Identificador público. El enlace de la charla y el reporte de un fallo usan este UUID.
+  codigo       String   @unique @default(uuid())
   tenantId     String
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   subscriberId String
   canal        CanalTipo?
   endpointId   String?
   destino      String?
-  nombre       String?
-  handoffHasta DateTime?
-  historial    Json
+  nombre             String?
+  handoffHasta       DateTime?
+  ultimoClienteAt    DateTime?
+  ventanaDesde       DateTime?
+  respuestasVentana  Int       @default(0)
+  historial          Json
   updatedAt    DateTime @updatedAt
 
   @@unique([tenantId, subscriberId])
@@ -225,6 +246,7 @@ model Subscription {
   mpPreapprovalId String?    @unique
   mpInitPoint     String?
   mpEstado        String?
+  canceladaEn     DateTime?
   updatedAt       DateTime   @updatedAt
 }
 
@@ -287,6 +309,38 @@ model Commission {
   @@index([affiliateId, estado])
 }
 
+model Calendario {
+  tenantId   String   @id
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshEnc String
+  email      String?
+  createdAt  DateTime @default(now())
+}
+
+model CargoExtra {
+  id             String      @id @default(cuid())
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periodo        String
+  cantidad       Int         @default(0)
+  precioUnitario Int
+  importeCobrado Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  pagos          PagoExtra[]
+
+  @@unique([tenantId, periodo])
+}
+
+model PagoExtra {
+  id         String     @id @default(cuid())
+  cargoId    String
+  cargo      CargoExtra @relation(fields: [cargoId], references: [id], onDelete: Cascade)
+  importe    Int
+  externalId String     @unique
+  createdAt  DateTime   @default(now())
+}
+
 model Ticket {
   id             String       @id @default(cuid())
   tipo           TicketTipo   @default(ia_personalizada)
@@ -316,6 +370,7 @@ model Turno {
   fecha               DateTime
   estado              TurnoEstado @default(reservado)
   recordatorioEnviado Boolean     @default(false)
+  eventoExternoId     String?
   createdAt           DateTime    @default(now())
 
   @@index([tenantId, fecha])

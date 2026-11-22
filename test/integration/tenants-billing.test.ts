@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { revisarVencimientos } from '../../src/billing/service';
+import { registrarPago, revisarVencimientos } from '../../src/billing/service';
 import { enviarRecordatorios } from '../../src/modules/recordatorios';
 import { alta, altaBase, createTestEnv, type TestEnv } from './helpers';
 
@@ -38,7 +38,7 @@ describe('fichas', () => {
       modulos: ['faq', 'handoff', 'turnos'],
       topeDia: 200,
       canales: [{ tipo: 'whatsapp', endpointId: 'PN-NORTE', conectado: true, tokenMask: '****oken' }],
-      importe: 80_000,
+      importe: 84_000,
     });
     expect(JSON.stringify(ficha)).not.toMatch(/whatsapp-secret-token|tokenEnc/);
     expect(ficha.linkPublico).toBe(`https://orbita.test/p/${ficha.publicToken}`);
@@ -100,11 +100,12 @@ describe('fichas', () => {
 });
 
 describe('cobros', () => {
-  it('transferencia: marcar pago, pausar, activar y pausa automática por impago', async () => {
+  it('un pago de Mercado Pago permite activar y la pausa por impago sigue a los 7 días', async () => {
     await alta(env);
     expect((await req('POST', '/clientes/pizzeria-norte/activar')).statusCode).toBe(409);
 
-    const pagada = (await req('POST', '/clientes/pizzeria-norte/transferencia')).json();
+    await registrarPago(env.deps, 'pizzeria-norte', { medio: 'mercadopago' });
+    const pagada = (await req('GET', '/clientes/pizzeria-norte')).json();
     expect(pagada.subscription).toMatchObject({ estadoPago: 'al_dia', vencimiento: '2026-12-14T15:00:00.000Z' });
     expect((await req('GET', '/clientes/pizzeria-norte/pagos')).json()).toHaveLength(1);
 
@@ -118,13 +119,14 @@ describe('cobros', () => {
     const pausada = (await req('GET', '/clientes/pizzeria-norte')).json();
     expect(pausada).toMatchObject({ estado: 'pausado', pausaMotivo: 'impago', subscription: { estadoPago: 'impago' } });
 
-    const reactivada = (await req('POST', '/clientes/pizzeria-norte/transferencia')).json();
+    await registrarPago(env.deps, 'pizzeria-norte', { medio: 'mercadopago', externalId: 'mp:reactiva' });
+    const reactivada = (await req('GET', '/clientes/pizzeria-norte')).json();
     expect(reactivada).toMatchObject({ estado: 'activo', subscription: { estadoPago: 'al_dia' } });
   });
 
-  it('transferencia no aplica a fichas de Mercado Pago', async () => {
-    await alta(env, { medio: 'mercadopago' });
-    expect((await req('POST', '/clientes/pizzeria-norte/transferencia')).statusCode).toBe(409);
+  it('ya no existe el cobro por transferencia', async () => {
+    await alta(env);
+    expect((await req('POST', '/clientes/pizzeria-norte/transferencia')).statusCode).toBe(404);
   });
 
   it('webhook de Mercado Pago registra el pago una sola vez', async () => {
@@ -159,9 +161,9 @@ describe('página del cliente', () => {
     expect(body).toMatchObject({
       nombre: 'Pizzería Norte',
       plan: { id: 'turnos' },
-      importe: 80_000,
-      transferencia: { alias: 'orbita.test.alias', importe: 80_000, concepto: 'pizzeria-norte' },
-      mercadopago: null,
+      importe: 84_000,
+      medio: 'mercadopago',
+      mercadopago: { initPoint: null, requiereEmail: true, habilitado: true },
       uso: { mes: 0, tope: 4_000 },
     });
     expect(JSON.stringify(body)).not.toMatch(/prompt|token":|whatsapp-secret/);
@@ -203,7 +205,7 @@ describe('recordatorios', () => {
     });
     expect(await enviarRecordatorios(env.deps)).toBe(1);
     expect(env.mensajeria.enviar).toHaveBeenCalledWith(
-      { canal: 'whatsapp', endpointId: 'PN-NORTE', destino: '54911999', token: 'whatsapp-secret-token' },
+      { canal: 'whatsapp', endpointId: 'PN-NORTE', destino: '54911999', token: 'whatsapp-secret-token', apiBase: null },
       'Mañana tenés turno a las 20:30. Respondé SI para confirmar.',
     );
     expect(await enviarRecordatorios(env.deps)).toBe(0);

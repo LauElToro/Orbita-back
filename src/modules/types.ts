@@ -12,6 +12,7 @@ export interface ModuloCtx {
 export interface ResultadoModulo {
   texto: string;
   handoff?: boolean;
+  imagen?: string;
 }
 
 export interface Modulo {

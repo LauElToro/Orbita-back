@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { revisarVencimientos } from '../../src/billing/service';
+import { registrarPago, revisarVencimientos } from '../../src/billing/service';
 import { alta, createTestEnv, registrarCliente, type TestEnv } from './helpers';
 
 let env: TestEnv;
@@ -21,7 +21,7 @@ describe('métricas del negocio', () => {
       canales: [{ tipo: 'instagram', endpointId: 'ig-bar', etiqueta: 'IG' }],
     });
     await registrarCliente(env);
-    await env.app.inject({ method: 'POST', url: '/clientes/pizzeria-norte/transferencia', headers: env.auth() });
+    await registrarPago(env.deps, 'pizzeria-norte', { medio: 'mercadopago' });
     await env.app.inject({
       method: 'POST',
       url: '/publico/contacto',
@@ -50,9 +50,9 @@ describe('métricas del negocio', () => {
     const m = res.json();
 
     expect(m.clientes).toMatchObject({ total: 3, activos: 2, enOnboarding: 1, porPlan: { turnos: 1, mensajes: 1 } });
-    expect(m.ingresos).toMatchObject({ mrr: 80_000, arpu: 80_000, mrrEnRiesgo: 42_000, cobrado30d: 80_000, porAcreditar: 0 });
+    expect(m.ingresos).toMatchObject({ mrr: 84_000, arpu: 84_000, mrrEnRiesgo: 42_000, cobrado30d: 84_000, porAcreditar: 84_000 });
     expect(m.ingresos.porMes).toHaveLength(6);
-    expect(m.ingresos.porMes.at(-1)).toEqual({ mes: '2026-11', total: 80_000 });
+    expect(m.ingresos.porMes.at(-1)).toEqual({ mes: '2026-11', total: 84_000 });
     expect(m.cobranza).toEqual({ al_dia: 1, pendiente: 1 });
     expect(m.mensajes).toMatchObject({ hoy: 42, ultimos30: 47 });
     expect(m.mensajes.serie).toHaveLength(30);

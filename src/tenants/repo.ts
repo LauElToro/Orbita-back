@@ -8,6 +8,7 @@ export const tenantInclude = {
   planPendiente: true,
   subscription: true,
   canales: true,
+  calendario: true,
   usuario: { select: { id: true, email: true, nombre: true, ultimoLogin: true, createdAt: true } },
   referido: { select: { affiliate: { select: { codigo: true } } } },
   _count: { select: { payments: true } },

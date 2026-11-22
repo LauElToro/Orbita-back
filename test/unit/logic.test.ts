@@ -5,7 +5,7 @@ import { verificarFirmaMp } from '../../src/billing/mercadopago';
 import { decrypt, encrypt, mask, safeEqual } from '../../src/lib/crypto';
 import { keys } from '../../src/lib/keys';
 import { modulosActivos } from '../../src/modules';
-import { pideHandoff } from '../../src/modules/handoff';
+import { handoff, pideHandoff } from '../../src/modules/handoff';
 import { esConfirmacion, textoRecordatorio } from '../../src/modules/recordatorios';
 import { parsearEtiquetas } from '../../src/modules/turnos';
 import { leerMensajes, MENSAJES_DEFAULT } from '../../src/tenants/defaults';
@@ -96,11 +96,23 @@ describe('módulos', () => {
     expect(pideHandoff('[handoff]')).toBe(true);
     expect(pideHandoff('hola')).toBe(false);
   });
+  it('le pasa al bot los casos para derivar', () => {
+    const conCasos = handoff.instrucciones({ tenant: { perfil: { derivar: 'Reclamos y facturas de eventos' } } } as never);
+    expect(conCasos).toContain('Reclamos y facturas de eventos');
+    expect(conCasos).toContain('[HANDOFF]');
+    const general = handoff.instrucciones({ tenant: { perfil: null } } as never);
+    expect(general).toMatch(/reclamo/i);
+    expect(general).not.toContain('Reclamos y facturas');
+  });
   it('parsea etiquetas de turnos y las saca del texto', () => {
     const r = parsearEtiquetas('Listo, te anoto. [TURNO_RESERVAR 2026-11-20 10:30] [TURNO_CANCELAR abc123]');
     expect(r.reservas).toEqual(['2026-11-20 10:30']);
     expect(r.cancelaciones).toEqual(['abc123']);
+    expect(r.reprogramaciones).toEqual([]);
     expect(r.limpio).toBe('Listo, te anoto.');
+    const movido = parsearEtiquetas('Lo pasé. [TURNO_REPROGRAMAR abc123 2026-11-21 11:00]');
+    expect(movido.reprogramaciones).toEqual([{ id: 'abc123', cuando: '2026-11-21 11:00' }]);
+    expect(movido.limpio).toBe('Lo pasé.');
   });
   it('recordatorios', () => {
     expect(esConfirmacion('SI')).toBe(true);
@@ -117,9 +129,14 @@ describe('módulos', () => {
 describe('planes y modelo', () => {
   it('precio según medio y plan personalizado', () => {
     const turnos = PLANES.find((p) => p.id === 'turnos')!;
-    expect(precioDe(turnos, 'transferencia')).toBe(80_000);
-    expect(precioDe(turnos, 'mercadopago')).toBe(84_000);
-    expect(precioDe(PLANES.find((p) => p.id === 'personalizado')!, 'mercadopago', 250_000)).toBe(250_000);
+    expect(precioDe(turnos)).toBe(84_000);
+    expect(precioDe(PLANES.find((p) => p.id === 'personalizado')!, 250_000)).toBe(250_000);
+    const mensajes = PLANES[0];
+    const incluido = mensajes.precioMercadoPago / mensajes.topeMes;
+    const salto = turnos.precioMercadoPago - mensajes.precioMercadoPago;
+    const capacidad = turnos.topeMes - mensajes.topeMes;
+    expect(mensajes.precioMensajeExtra).toBeGreaterThan(incluido);
+    expect(mensajes.precioMensajeExtra).toBeGreaterThan(salto / capacidad);
   });
   it('el modelo capaz solo se usa si el plan lo paga', () => {
     const config = { MODELO_BARATO: 'barato/x', MODELO_CAPAZ: 'capaz/y' } as Config;

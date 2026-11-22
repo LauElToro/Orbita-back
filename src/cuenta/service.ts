@@ -18,6 +18,8 @@ import { enviarCorreo } from '../correo/correo';
 import { avisarSesion } from '../correo/envios';
 import { mensajeBienvenida, mensajeBienvenidaGoogle, mensajeDefinirContrasena, mensajeRestablecer } from '../correo/plantillas';
 import { actualizarTenant, canalesDto, canalSchema, importeDe } from '../tenants/service';
+import { metaListo } from '../messaging/whatsapp';
+import type { ResumenExtra } from '../usage/usage';
 import { webDto } from '../web/service';
 
 const PLANES_AUTOGESTION = ['mensajes', 'turnos', 'completo'] as const;
@@ -274,7 +276,7 @@ export function requisitosOnboarding(tenant: TenantFull): Requisitos {
   };
 }
 
-export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: DocumentoLegal[]) {
+export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: DocumentoLegal[], extras?: ResumenExtra) {
   const sub = tenant.subscription;
   const importe = importeDe(tenant);
   return {
@@ -298,6 +300,19 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
     planElegido: tenant.planElegido,
     canales: canalesDto(deps, tenant.canales),
     web: webDto(deps, tenant),
+    whatsapp: {
+      listo: metaListo(deps),
+      appId: deps.config.META_APP_ID,
+      configId: deps.config.META_EMBEDDED_CONFIG_ID,
+      version: deps.config.META_API_VERSION,
+    },
+    redes: {
+      facebook: { listo: deps.redes.listo('facebook') },
+      instagram: { listo: deps.redes.listo('instagram') },
+      tiktok: { listo: deps.redes.listo('tiktok') },
+    },
+    calendario: { conectado: Boolean(tenant.calendario), email: tenant.calendario?.email ?? null },
+    extras: extras ?? null,
     suscripcion: sub
       ? {
           medio: sub.medio,
@@ -306,9 +321,9 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
           importe,
           mpInitPoint: sub.mpInitPoint,
           debitoActivo: sub.mpEstado === 'authorized',
+          canceladaEn: sub.canceladaEn,
         }
       : null,
-    transferencia: sub?.medio === 'transferencia' ? { alias: deps.config.TRANSFER_ALIAS, importe, concepto: tenant.id } : null,
     referido: tenant.referido ? { codigo: tenant.referido.affiliate.codigo } : null,
     referidoEditable: !tenant.referido && tenant._count.payments === 0,
     onboarding: {

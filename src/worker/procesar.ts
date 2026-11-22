@@ -1,6 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import type { Deps } from '../deps';
+import { responderDesdeDatos } from '../ai/charla';
 import { armarContexto } from '../ai/contexto';
+import { perfilSchema } from '../ai/perfil';
 import { agregarAlHistorial, leerHistorial, limpiarFormato } from '../ai/prompt';
 import { avisarSiLlegoAlLimite } from '../correo/campanas';
 import { avisoOrbita, enviarCorreo } from '../correo/correo';
@@ -9,10 +11,12 @@ import { keys } from '../lib/keys';
 import { acquireLock } from '../lib/lock';
 import { destinoDe } from '../messaging/destino';
 import type { JobGeneracion } from '../messaging/entrada';
+import { modulosActivos } from '../modules';
 import type { ModuloCtx, ResultadoModulo } from '../modules/types';
 import { leerMensajes } from '../tenants/defaults';
 import { getTenant, type TenantFull } from '../tenants/repo';
-import { alcanzoTope, leerUso, sumarUso, topesDe } from '../usage/usage';
+import { contarRespuestaSaliente } from '../messaging/ventanas';
+import { alcanzoTope, leerUso, registrarExtra, sumarUso, topesDe } from '../usage/usage';
 
 export interface Resultado {
   estado: 'enviado' | 'ignorado' | 'sin_canal' | 'error_envio';
@@ -32,13 +36,34 @@ export interface Respuesta {
   texto: string;
   handoff: boolean;
   tope: boolean;
+  imagen?: string;
 }
 
 async function generar(deps: Deps, ctx: ModuloCtx, intentos = 2): Promise<ResultadoModulo> {
   const conversacion = await deps.prisma.conversation.findUnique({
     where: { tenantId_subscriberId: { tenantId: ctx.tenant.id, subscriberId: ctx.subscriberId } },
   });
-  const { modulos, mensajes, modelo } = await armarContexto(deps, ctx, leerHistorial(conversacion?.historial));
+  const historial = leerHistorial(conversacion?.historial);
+  const perfil = perfilSchema.safeParse(ctx.tenant.perfil);
+  if (perfil.success && perfil.data.catalogo.length > 0) {
+    const directo = responderDesdeDatos({
+      nombreNegocio: ctx.tenant.nombre,
+      perfil: perfil.data,
+      modulos: ctx.tenant.modulos,
+      nombreCliente: ctx.nombre,
+      texto: ctx.textoUsuario,
+      historial,
+      textoHandoff: leerMensajes(ctx.tenant.mensajes).handoff,
+      ahora: ctx.deps.now(),
+      timezone: ctx.tenant.timezone,
+    });
+    if (directo) {
+      let salida: ResultadoModulo = { texto: directo.texto, handoff: directo.handoff, imagen: directo.imagen };
+      for (const m of modulosActivos(ctx.tenant.modulos)) if (m.procesar) salida = await m.procesar(ctx, salida);
+      return { ...salida, texto: limpiarFormato(salida.texto) };
+    }
+  }
+  const { modulos, mensajes, modelo } = await armarContexto(deps, ctx, historial);
   let ultimoError: unknown;
   for (let i = 0; i < intentos; i++) {
     try {
@@ -71,16 +96,15 @@ async function guardarHistorial(deps: Deps, tenantId: string, subscriberId: stri
 /** Tope, IA, módulos, uso e historial. No envía nada ni decide qué hacer con la derivación. */
 export async function responderConsulta(deps: Deps, tenant: TenantFull, consulta: Consulta): Promise<Respuesta> {
   const fijos = leerMensajes(tenant.mensajes);
-  if (alcanzoTope(await leerUso(deps, tenant), topesDe(tenant))) {
-    return { texto: fijos.tope, handoff: true, tope: true };
-  }
+  const extra = alcanzoTope(await leerUso(deps, tenant), topesDe(tenant));
   const ctx: ModuloCtx = { deps, tenant, subscriberId: consulta.subscriberId, nombre: consulta.nombre, textoUsuario: consulta.texto };
   try {
     const salida = await generar(deps, ctx);
     await sumarUso(deps, tenant);
+    if (extra) await registrarExtra(deps, tenant);
     void avisarSiLlegoAlLimite(deps, tenant);
     await guardarHistorial(deps, tenant.id, consulta.subscriberId, consulta.texto, salida.texto);
-    return { texto: salida.texto, handoff: Boolean(salida.handoff), tope: false };
+    return { texto: salida.texto, handoff: Boolean(salida.handoff), tope: extra, imagen: salida.imagen };
   } catch (err) {
     console.error(`generación ${consulta.messageId} falló`, err);
     return { texto: fijos.handoff, handoff: true, tope: false };
@@ -136,7 +160,7 @@ export async function procesarMensaje(deps: Deps, job: JobGeneracion): Promise<R
     const tenant = await getTenant(deps.prisma, job.tenantId);
     if (tenant.estado === 'pausado') return { estado: 'ignorado', texto: '', handoff: false };
 
-    const { texto, handoff } = await responderConsulta(deps, tenant, job);
+    const { texto, handoff, imagen } = await responderConsulta(deps, tenant, job);
     if (handoff) await derivar(deps, tenant, job);
 
     const conv = await deps.prisma.conversation.findUnique({
@@ -148,11 +172,12 @@ export async function procesarMensaje(deps: Deps, job: JobGeneracion): Promise<R
       return { estado: 'sin_canal', texto, handoff };
     }
     try {
-      await deps.mensajeria.enviar(destino, texto);
+      await deps.mensajeria.enviar(destino, texto, imagen);
     } catch (err) {
       console.error(`envío ${job.messageId} por ${destino.canal} falló`, err instanceof Error ? err.message : err);
       return { estado: 'error_envio', texto, handoff };
     }
+    await contarRespuestaSaliente(deps, tenant.id, job.subscriberId, destino.canal);
     return { estado: 'enviado', texto, handoff };
   });
 }

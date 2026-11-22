@@ -7,6 +7,8 @@ export const keys = {
   uso: (tenantId: string, periodo: string) => `uso:${tenantId}:${periodo}`,
   rateLimit: (scope: string, id: string) => `rl:${scope}:${id}`,
   googleState: (state: string) => `google:state:${state}`,
+  calendarioState: (state: string) => `calendario:state:${state}`,
+  redesState: (state: string) => `redes:state:${state}`,
 };
 
 export const QUEUE_GENERACION = 'generacion';

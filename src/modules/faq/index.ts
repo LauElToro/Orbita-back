@@ -6,6 +6,6 @@ export const faq: Modulo = {
     [
       'Respondé solo con la información del negocio que figura arriba.',
       'Si no tenés el dato, decilo con honestidad y no inventes precios, horarios ni stock.',
-      'Respuestas cortas, en español rioplatense, con el tono indicado por el negocio.',
+      'Respuestas cortas, en español argentino neutro y sin jerga, con el tono indicado por el negocio.',
     ].join('\n'),
 };

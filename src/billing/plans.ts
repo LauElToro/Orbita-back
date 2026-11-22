@@ -1,4 +1,4 @@
-import type { MedioPago, Plan, PrismaClient } from '@prisma/client';
+import type { Plan, PrismaClient } from '@prisma/client';
 
 export type PlanId = 'mensajes' | 'turnos' | 'completo' | 'personalizado';
 
@@ -8,6 +8,8 @@ export const PLANES: Plan[] = [
     nombre: 'Mensajes',
     precioTransferencia: 40_000,
     precioMercadoPago: 42_000,
+    // Más caro que el cupo incluido (~$21) y que subir a Turnos (~$21 por respuesta nueva).
+    precioMensajeExtra: 45,
     topeDia: 100,
     topeSemana: 500,
     topeMes: 2_000,
@@ -20,6 +22,7 @@ export const PLANES: Plan[] = [
     nombre: 'Turnos',
     precioTransferencia: 80_000,
     precioMercadoPago: 84_000,
+    precioMensajeExtra: 40,
     topeDia: 200,
     topeSemana: 1_000,
     topeMes: 4_000,
@@ -32,6 +35,7 @@ export const PLANES: Plan[] = [
     nombre: 'Completo',
     precioTransferencia: 110_000,
     precioMercadoPago: 115_000,
+    precioMensajeExtra: 30,
     topeDia: 400,
     topeSemana: 2_000,
     topeMes: 8_000,
@@ -44,6 +48,7 @@ export const PLANES: Plan[] = [
     nombre: 'Personalizado',
     precioTransferencia: 0,
     precioMercadoPago: 0,
+    precioMensajeExtra: 25,
     topeDia: 1_000,
     topeSemana: 5_000,
     topeMes: 20_000,
@@ -59,12 +64,11 @@ export async function ensurePlans(prisma: PrismaClient): Promise<void> {
   }
 }
 
-/** Importe mensual según plan y medio. El plan personalizado usa el precio acordado en el ticket. */
+/** Importe mensual del abono, siempre por Mercado Pago. El plan personalizado usa el precio acordado. */
 export function precioDe(
-  plan: Pick<Plan, 'id' | 'precioTransferencia' | 'precioMercadoPago'>,
-  medio: MedioPago,
+  plan: Pick<Plan, 'id' | 'precioMercadoPago'>,
   precioPersonalizado?: number | null,
 ): number {
   if (plan.id === 'personalizado') return precioPersonalizado ?? 0;
-  return medio === 'mercadopago' ? plan.precioMercadoPago : plan.precioTransferencia;
+  return plan.precioMercadoPago;
 }

@@ -1,18 +1,24 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import type { Deps } from '../deps';
 import { tenantDeSesion } from '../admin/auth';
 import { simular } from '../ai/simulador';
-import { iniciarSuscripcionMp } from '../billing/service';
+import { darDeBaja, iniciarCobroExtra, iniciarSuscripcionMp } from '../billing/service';
 import { HttpError } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
 import { registerDemoRoutes } from '../demo/routes';
 import { documentosPendientes, registrarAceptacion } from '../legal/legal';
 import { getTenant } from '../tenants/repo';
 import { actualizarTenant } from '../tenants/service';
-import { leerUso } from '../usage/usage';
+import { leerUso, resumenExtras } from '../usage/usage';
+import { completarRed, esRed, iniciarRed } from '../messaging/redes';
+import { conectarWhatsapp, refrescarWhatsapp } from '../messaging/whatsapp';
+import { devolverCharla, listarAvisos, obtenerCharla, pausarCharla, responderEnVentana } from '../messaging/ventanas';
+import { completarCalendario, desconectarCalendario, prepararCalendario } from '../modules/turnos/calendario';
 import { guardarWeb, rotarClaveWeb } from '../web/service';
 import { darDeBajaAvisos } from '../correo/envios';
 import { activarAfiliadoCliente, actualizarAfiliadoCliente, afiliadoDeCliente, cargarReferido } from '../afiliados/service';
+import { guardarEnOrbita } from '../archivos/blob';
 import { completarGoogle, prepararGoogle } from './google';
 import {
   activarPropio,
@@ -49,6 +55,12 @@ const SOLO_CON_PAGO = new Set([
   '/cuenta/pausar',
   '/cuenta/activar',
   '/cuenta/probar',
+  '/cuenta/whatsapp',
+  '/cuenta/whatsapp/estado',
+  '/cuenta/redes/:red/iniciar',
+  '/cuenta/redes/callback',
+  '/cuenta/calendario/iniciar',
+  '/cuenta/calendario/callback',
 ]);
 
 export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
@@ -121,16 +133,28 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
       }
     });
 
-    const responder = async (req: FastifyRequest, tenantId: string) =>
-      cuentaDto(
-        deps,
-        await getTenant(deps.prisma, tenantId),
-        await documentosPendientes(deps.prisma, tenantDeSesion(req).userId),
-      );
+    const responder = async (req: FastifyRequest, tenantId: string) => {
+      const tenant = await getTenant(deps.prisma, tenantId);
+      return cuentaDto(deps, tenant, await documentosPendientes(deps.prisma, tenantDeSesion(req).userId), await resumenExtras(deps, tenant));
+    };
 
     cuenta.get('/cuenta/me', async (req) => responder(req, tenantDeSesion(req).tenantId));
 
     registerDemoRoutes(cuenta, deps);
+
+    cuenta.post('/cuenta/archivos', { bodyLimit: 12 * 1024 * 1024 }, async (req, reply) => {
+      const { tenantId } = tenantDeSesion(req);
+      await rateLimit(deps.redis, 'archivos', tenantId, 60, 3600);
+      const cuerpo = z
+        .object({
+          nombre: z.string().trim().min(1).max(160),
+          archivo: z.string().min(1).max(12_000_000),
+          carpeta: z.string().trim().max(80).optional(),
+        })
+        .parse(req.body);
+      const guardado = await guardarEnOrbita(deps.config.BLOB_READ_WRITE_TOKEN, cuerpo.nombre, cuerpo.archivo, cuerpo.carpeta ?? tenantId);
+      return reply.code(201).send(guardado);
+    });
 
     cuenta.post('/cuenta/legal/aceptar', async (req) => {
       const { userId, tenantId } = tenantDeSesion(req);
@@ -168,6 +192,84 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
     cuenta.post('/cuenta/afiliado', async (req) => activarAfiliadoCliente(deps, tenantDeSesion(req).userId, req.body));
 
     cuenta.patch('/cuenta/afiliado', async (req) => actualizarAfiliadoCliente(deps, tenantDeSesion(req).userId, req.body));
+
+    cuenta.post('/cuenta/baja', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await darDeBaja(deps, tenantId);
+      return responder(req, tenantId);
+    });
+
+    cuenta.post('/cuenta/extras', async (req) => {
+      const tenant = await getTenant(deps.prisma, tenantDeSesion(req).tenantId);
+      return iniciarCobroExtra(deps, tenant);
+    });
+
+    cuenta.post('/cuenta/whatsapp', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await conectarWhatsapp(deps, tenantId, req.body);
+      return responder(req, tenantId);
+    });
+
+    cuenta.post('/cuenta/whatsapp/estado', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await refrescarWhatsapp(deps, tenantId);
+      return responder(req, tenantId);
+    });
+
+    cuenta.post('/cuenta/redes/:red/iniciar', async (req) => {
+      const { red } = z.object({ red: z.string() }).parse(req.params);
+      if (!esRed(red)) throw new HttpError(404, 'Esa red no se conecta desde acá');
+      return iniciarRed(deps, tenantDeSesion(req).tenantId, red);
+    });
+
+    cuenta.post('/cuenta/redes/callback', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await completarRed(deps, tenantId, req.body);
+      return responder(req, tenantId);
+    });
+
+    cuenta.get('/cuenta/ventanas', async (req) => {
+      const { q } = z.object({ q: z.string().trim().max(80).optional() }).parse(req.query);
+      return listarAvisos(deps, tenantDeSesion(req).tenantId, q);
+    });
+
+    cuenta.get('/cuenta/ventanas/:id', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+      return obtenerCharla(deps, tenantId, id);
+    });
+
+    cuenta.post('/cuenta/ventanas/:id/responder', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+      return responderEnVentana(deps, tenantId, id, req.body);
+    });
+
+    cuenta.post('/cuenta/ventanas/:id/pausar', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+      return pausarCharla(deps, tenantId, id);
+    });
+
+    cuenta.post('/cuenta/ventanas/:id/devolver', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+      return devolverCharla(deps, tenantId, id);
+    });
+
+    cuenta.post('/cuenta/calendario/iniciar', async (req) => prepararCalendario(deps, tenantDeSesion(req).tenantId));
+
+    cuenta.post('/cuenta/calendario/callback', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await completarCalendario(deps, tenantId, req.body);
+      return responder(req, tenantId);
+    });
+
+    cuenta.delete('/cuenta/calendario', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await desconectarCalendario(deps, tenantId);
+      return responder(req, tenantId);
+    });
 
     cuenta.post('/cuenta/suscripcion', async (req) => {
       const tenant = await getTenant(deps.prisma, tenantDeSesion(req).tenantId);

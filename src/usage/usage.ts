@@ -49,6 +49,48 @@ export async function leerUso(deps: Deps, tenant: TenantFull): Promise<UsoActual
   return { dia, semana, mes, periodos: p };
 }
 
+export interface ResumenExtra {
+  cantidad: number;
+  pendiente: number;
+  precio: number;
+  periodo: string;
+}
+
+/** Cada respuesta por encima del cupo suma un cargo distinto del abono. */
+export async function registrarExtra(deps: Deps, tenant: TenantFull): Promise<void> {
+  const precio = tenant.plan.precioMensajeExtra;
+  if (precio <= 0) return;
+  const periodo = periodosDe(deps, tenant).mes;
+  await deps.prisma.cargoExtra.upsert({
+    where: { tenantId_periodo: { tenantId: tenant.id, periodo } },
+    create: { tenantId: tenant.id, periodo, cantidad: 1, precioUnitario: precio, importeCobrado: 0 },
+    update: { cantidad: { increment: 1 }, precioUnitario: precio },
+  });
+}
+
+/** Un pago de Mercado Pago con referencia `extra:` acredita el cargo, sin mover el vencimiento del abono. */
+export async function acreditarExtra(deps: Deps, externalReference: string, pago: { id: string; importe: number }) {
+  const [, tenantId, periodo] = externalReference.split(':');
+  if (!tenantId || !periodo) return;
+  const externalId = `mp:${pago.id}`;
+  if (await deps.prisma.pagoExtra.findUnique({ where: { externalId } })) return;
+  const cargo = await deps.prisma.cargoExtra.findUnique({ where: { tenantId_periodo: { tenantId, periodo } } });
+  if (!cargo) return;
+  await deps.prisma.$transaction([
+    deps.prisma.pagoExtra.create({ data: { cargoId: cargo.id, importe: pago.importe, externalId } }),
+    deps.prisma.cargoExtra.update({ where: { id: cargo.id }, data: { importeCobrado: { increment: pago.importe } } }),
+  ]);
+}
+
+export async function resumenExtras(deps: Deps, tenant: TenantFull): Promise<ResumenExtra> {
+  const periodo = periodosDe(deps, tenant).mes;
+  const precio = tenant.plan.precioMensajeExtra;
+  const cargo = await deps.prisma.cargoExtra.findUnique({ where: { tenantId_periodo: { tenantId: tenant.id, periodo } } });
+  const cantidad = cargo?.cantidad ?? 0;
+  const cobrado = cargo?.importeCobrado ?? 0;
+  return { cantidad, pendiente: Math.max(0, cantidad * precio - cobrado), precio, periodo };
+}
+
 /** Suma una respuesta del bot a los tres contadores: atómico en Redis y persistido en Postgres. */
 export async function sumarUso(deps: Deps, tenant: TenantFull): Promise<void> {
   const p = periodosDe(deps, tenant);

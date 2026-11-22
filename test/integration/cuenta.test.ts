@@ -48,7 +48,6 @@ describe('registro y acceso', () => {
       negocio: { id: 'peluqueria-luna', estado: 'pausado', pausaMotivo: 'onboarding', modulos: ['faq', 'handoff', 'turnos'] },
       plan: { id: 'turnos' },
       suscripcion: { estadoPago: 'pendiente', importe: 84_000, medio: 'mercadopago' },
-      transferencia: null,
       onboarding: { paso: 0, completado: null, requisitos: { pago: false, canal: false, prompt: false } },
     });
     expect(me.manychat).toBeUndefined();
@@ -56,7 +55,7 @@ describe('registro y acceso', () => {
     const aceptaciones = await env.deps.prisma.legalAcceptance.findMany({ orderBy: { documento: 'asc' } });
     expect(aceptaciones.map((a) => [a.documento, a.version, a.ip])).toEqual([
       ['privacidad', '2026-11-14', '127.0.0.1'],
-      ['terminos', '2026-11-14', '127.0.0.1'],
+      ['terminos', '2026-11-21', '127.0.0.1'],
     ]);
 
     expect((await env.app.inject({ method: 'POST', url: '/cuenta/registro', payload: registroBase })).statusCode).toBe(409);
@@ -165,7 +164,16 @@ describe('onboarding', () => {
       canales: [{ tipo: 'instagram', endpointId: 'ig-luna', etiqueta: 'Instagram', token: 'token-instagram-largo' }],
     });
     expect(canales.json().canales).toEqual([
-      { tipo: 'instagram', endpointId: 'ig-luna', etiqueta: 'Instagram', conectado: true, tokenMask: '****argo' },
+      {
+        tipo: 'instagram',
+        endpointId: 'ig-luna',
+        etiqueta: 'Instagram',
+        conectado: true,
+        tokenMask: '****argo',
+        verificacion: null,
+        verificacionDetalle: null,
+        displayPhone: null,
+      },
     ]);
     expect(JSON.stringify(canales.json())).not.toContain('token-instagram-largo');
 

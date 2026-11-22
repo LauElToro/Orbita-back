@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Deps } from '../deps';
-import { activar, marcarTransferencia, pausar } from '../billing/service';
+import { activar, pausar } from '../billing/service';
 import { generarReset, invitarCliente } from '../cuenta/service';
 import { leerUso } from '../usage/usage';
 import { getTenant } from './repo';
@@ -45,11 +45,6 @@ export function registerTenantRoutes(app: FastifyInstance, deps: Deps): void {
     admin.post('/clientes/:id/activar', async (req) => {
       const { id } = idParams.parse(req.params);
       return fichaDto(deps, await activar(deps, id));
-    });
-
-    admin.post('/clientes/:id/transferencia', async (req) => {
-      const { id } = idParams.parse(req.params);
-      return fichaDto(deps, await marcarTransferencia(deps, id));
     });
 
     admin.get('/clientes/:id/uso', async (req) => {
