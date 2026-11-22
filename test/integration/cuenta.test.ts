@@ -54,8 +54,8 @@ describe('registro y acceso', () => {
 
     const aceptaciones = await env.deps.prisma.legalAcceptance.findMany({ orderBy: { documento: 'asc' } });
     expect(aceptaciones.map((a) => [a.documento, a.version, a.ip])).toEqual([
-      ['privacidad', '2026-11-14', '127.0.0.1'],
-      ['terminos', '2026-11-21', '127.0.0.1'],
+      ['privacidad', '2026-11-22', '127.0.0.1'],
+      ['terminos', '2026-11-22', '127.0.0.1'],
     ]);
 
     expect((await env.app.inject({ method: 'POST', url: '/cuenta/registro', payload: registroBase })).statusCode).toBe(409);

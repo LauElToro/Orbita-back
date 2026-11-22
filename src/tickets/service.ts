@@ -11,7 +11,6 @@ const aceptaPrivacidad = z.literal(true, {
 export const contactoSchema = z.object({
   nombre: z.string().trim().min(2).max(120),
   email: z.string().trim().email(),
-  telefono: z.string().trim().max(40).optional(),
   empresa: z.string().trim().min(1).max(120),
   rubro: z.string().trim().min(1).max(80),
   necesidad: z.string().trim().min(10).max(4000),

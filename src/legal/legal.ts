@@ -2,8 +2,8 @@ import type { PrismaClient } from '@prisma/client';
 
 /** Cambiar la versión obliga a cada cliente a volver a aceptar el documento en su próximo ingreso. */
 export const LEGAL = {
-  terminos: '2026-11-21',
-  privacidad: '2026-11-14',
+  terminos: '2026-11-22',
+  privacidad: '2026-11-22',
 } as const;
 
 export type DocumentoLegal = keyof typeof LEGAL;

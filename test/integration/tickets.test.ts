@@ -29,7 +29,7 @@ describe('tickets de IA personalizada', () => {
     expect((await enviar({ ...contacto, aceptaPrivacidad: false })).statusCode).toBe(400);
     const tickets = await env.deps.prisma.ticket.findMany();
     expect(tickets).toHaveLength(1);
-    expect(tickets[0]).toMatchObject({ tipo: 'ia_personalizada', privacidadVersion: '2026-11-14', ip: '127.0.0.1' });
+    expect(tickets[0]).toMatchObject({ tipo: 'ia_personalizada', privacidadVersion: '2026-11-22', ip: '127.0.0.1' });
     expect((await env.app.inject({ method: 'GET', url: '/tickets' })).statusCode).toBe(401);
   });
 
