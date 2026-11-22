@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Deps } from '../deps';
 import { tenantDeSesion } from '../admin/auth';
 import { simular } from '../ai/simulador';
-import { darDeBaja, iniciarCobroExtra, iniciarSuscripcionMp } from '../billing/service';
+import { darDeBaja, iniciarCobroExtra, iniciarSuscripcionMp, recontratar } from '../billing/service';
 import { HttpError } from '../lib/errors';
 import { rateLimit } from '../lib/rateLimit';
 import { registerDemoRoutes } from '../demo/routes';
@@ -196,6 +196,12 @@ export function registerCuentaRoutes(app: FastifyInstance, deps: Deps): void {
     cuenta.post('/cuenta/baja', async (req) => {
       const { tenantId } = tenantDeSesion(req);
       await darDeBaja(deps, tenantId);
+      return responder(req, tenantId);
+    });
+
+    cuenta.post('/cuenta/recontratar', async (req) => {
+      const { tenantId } = tenantDeSesion(req);
+      await recontratar(deps, tenantId);
       return responder(req, tenantId);
     });
 

@@ -322,6 +322,7 @@ export function cuentaDto(deps: Deps, tenant: TenantFull, legalPendiente: Docume
           mpInitPoint: sub.mpInitPoint,
           debitoActivo: sub.mpEstado === 'authorized',
           canceladaEn: sub.canceladaEn,
+          tuvoPagos: tenant._count.payments > 0,
         }
       : null,
     referido: tenant.referido ? { codigo: tenant.referido.affiliate.codigo } : null,

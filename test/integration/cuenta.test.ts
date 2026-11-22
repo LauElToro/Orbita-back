@@ -273,6 +273,42 @@ describe('plan y pago del cliente', () => {
     expect((await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'mensajes' })).statusCode).toBe(409);
   });
 
+  it('la baja de un plan sin pagos cierra al instante y no deja cobrar', async () => {
+    const { headers } = await registrarCliente(env);
+    const baja = await llamar(headers, 'POST', '/cuenta/baja');
+    expect(baja.statusCode).toBe(200);
+    expect(baja.json()).toMatchObject({
+      negocio: { estado: 'pausado', pausaMotivo: 'baja' },
+      suscripcion: { estadoPago: 'impago', tuvoPagos: false },
+    });
+    expect(baja.json().suscripcion.canceladaEn).toBeTruthy();
+
+    const cobro = await llamar(headers, 'POST', '/cuenta/suscripcion');
+    expect(cobro.statusCode).toBe(409);
+    expect(cobro.json().error).toMatch(/no hay nada que cobrar/);
+
+    const vuelta = await llamar(headers, 'POST', '/cuenta/recontratar');
+    expect(vuelta.statusCode).toBe(200);
+    expect(vuelta.json()).toMatchObject({
+      negocio: { estado: 'pausado', pausaMotivo: 'onboarding' },
+      suscripcion: { estadoPago: 'pendiente', canceladaEn: null, tuvoPagos: false },
+    });
+  });
+
+  it('un plan ya pago no se reabre: sigue hasta el vencimiento', async () => {
+    const { headers } = await registrarCliente(env);
+    await pagar('peluqueria-luna');
+    const baja = await llamar(headers, 'POST', '/cuenta/baja');
+    expect(baja.statusCode).toBe(200);
+    expect(baja.json()).toMatchObject({
+      negocio: { estado: 'pausado', pausaMotivo: 'onboarding' },
+      suscripcion: { estadoPago: 'al_dia', tuvoPagos: true },
+    });
+    expect(baja.json().suscripcion.canceladaEn).toBeTruthy();
+    expect((await llamar(headers, 'POST', '/cuenta/recontratar')).statusCode).toBe(409);
+    expect((await llamar(headers, 'POST', '/cuenta/suscripcion')).statusCode).toBe(409);
+  });
+
   it('sin pagar no cambia de plan, y volver al plan vigente descarta el cambio', async () => {
     const { headers } = await registrarCliente(env, { medio: 'mercadopago' });
     const pedido = (await llamar(headers, 'PATCH', '/cuenta/plan', { planId: 'mensajes' })).json();

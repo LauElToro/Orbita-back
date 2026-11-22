@@ -91,8 +91,15 @@ export async function registrarPago(deps: Deps, tenantId: string, pago: PagoInpu
 export async function iniciarSuscripcionMp(deps: Deps, tenant: TenantFull, email: string | undefined, backUrl: string) {
   const sub = tenant.subscription;
   if (!sub) throw notFound('Suscripción');
-  if (sub.canceladaEn && sub.vencimiento > deps.now()) {
-    throw new HttpError(409, 'La baja ya está hecha. El plan sigue hasta el vencimiento y no se vuelve a cobrar.');
+  // Sin pagos, la baja cierra la cuenta: no hay período que seguir cobrando.
+  // Con un período ya pago, se puede volver a suscribir recién cuando ese período termina.
+  if (sub.canceladaEn && (tenant._count.payments === 0 || sub.vencimiento > deps.now())) {
+    throw new HttpError(
+      409,
+      tenant._count.payments === 0
+        ? 'Este plan está dado de baja. Como no llegaste a pagar, no hay nada que cobrar.'
+        : 'La baja ya está hecha. El plan sigue hasta el vencimiento y no se vuelve a cobrar.',
+    );
   }
   if (!tenant.planElegido) throw new HttpError(409, 'Elegí un plan antes de pagar');
   if (sub.mpInitPoint) return { initPoint: sub.mpInitPoint };
@@ -174,8 +181,9 @@ export async function conciliarMercadoPago(deps: Deps): Promise<{ revisadas: num
 }
 
 /**
- * La baja corta el débito al instante y no devuelve el período ya pago.
- * El plan sigue hasta el vencimiento; después no se vuelve a cobrar.
+ * La baja corta el débito al instante.
+ * Si nunca hubo un pago, cierra la cuenta en el momento y no queda nada por cobrar.
+ * Si el período ya está pago, el plan sigue hasta el vencimiento y después no se vuelve a cobrar.
  */
 export async function darDeBaja(deps: Deps, tenantId: string) {
   const tenant = await getTenant(deps.prisma, tenantId);
@@ -186,10 +194,43 @@ export async function darDeBaja(deps: Deps, tenantId: string) {
     if (!deps.mercadopago.habilitado) throw new HttpError(503, 'Mercado Pago no está configurado');
     await deps.mercadopago.cancelarSuscripcion(sub.mpPreapprovalId);
   }
-  await deps.prisma.subscription.update({
-    where: { tenantId },
-    data: { canceladaEn: deps.now(), mpEstado: 'cancelled', mpPreapprovalId: null, mpInitPoint: null },
-  });
+  const nuncaPago = tenant._count.payments === 0;
+  await deps.prisma.$transaction([
+    deps.prisma.subscription.update({
+      where: { tenantId },
+      data: {
+        canceladaEn: deps.now(),
+        mpEstado: 'cancelled',
+        mpPreapprovalId: null,
+        mpInitPoint: null,
+        ...(nuncaPago ? { estadoPago: 'impago' as const } : {}),
+      },
+    }),
+    ...(nuncaPago
+      ? [deps.prisma.tenant.update({ where: { id: tenantId }, data: { estado: 'pausado', pausaMotivo: 'baja' } })]
+      : []),
+  ]);
+  return getTenant(deps.prisma, tenantId);
+}
+
+/** Vuelve a abrir un plan que se dio de baja sin haber pagado nunca, para poder contratarlo. */
+export async function recontratar(deps: Deps, tenantId: string) {
+  const tenant = await getTenant(deps.prisma, tenantId);
+  const sub = tenant.subscription;
+  if (!sub) throw notFound('Suscripción');
+  if (!sub.canceladaEn) return tenant;
+  if (tenant._count.payments > 0) {
+    throw new HttpError(409, 'Este plan ya tuvo un pago. Cuando vence, podés suscribirte de nuevo.');
+  }
+  await deps.prisma.$transaction([
+    deps.prisma.subscription.update({
+      where: { tenantId },
+      data: { canceladaEn: null, estadoPago: 'pendiente', mpEstado: null },
+    }),
+    ...(tenant.pausaMotivo === 'baja'
+      ? [deps.prisma.tenant.update({ where: { id: tenantId }, data: { estado: 'pausado', pausaMotivo: 'onboarding' } })]
+      : []),
+  ]);
   return getTenant(deps.prisma, tenantId);
 }
 
